@@ -77,6 +77,15 @@
   #codeIn:focus { box-shadow:0 0 0 2px #fff; }
   .status { font-size:14px; line-height:1.6; min-height:1em; }
   .code { font-size:24px; letter-spacing:5px; background:rgba(0,0,0,.35); padding:2px 12px; border-radius:6px; user-select:all; -webkit-user-select:all; }
+  .skins { background:rgba(0,0,0,.28); border-radius:10px; padding:10px 14px; display:flex; flex-direction:column; gap:10px; }
+  .skin-row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; font-size:14px; }
+  .skin-row b { min-width:34px; text-align:right; }
+  .swatches { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; }
+  .swatch {
+    width:24px; height:24px; border-radius:50%; border:2px solid rgba(255,255,255,.3); padding:0; cursor:pointer;
+  }
+  .swatch.on { border-color:#fff; box-shadow:0 0 0 2px rgba(0,0,0,.4); transform:scale(1.12); }
+  .swatch:disabled { opacity:.2; cursor:not-allowed; }
   .stats { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:10px; }
   .stats span { background:rgba(0,0,0,.3); padding:4px 10px; border-radius:999px; font-size:13px; }
   .small { font-size:12px !important; opacity:.75; }
@@ -131,6 +140,8 @@
           <button class="link" id="leaveBtn" hidden>Leave online game</button>
         </div>
         <div class="keys menu-only" id="keys"></div>
+        <button class="btn2 menu-only" id="skinBtn">🎨 Snake looks</button>
+        <div class="skins menu-only" id="skinPanel" hidden></div>
         <div class="settings menu-only" id="settings">
           <span>Mode</span>
           <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button></div>
@@ -183,10 +194,23 @@ const EMOTE_KEYS = {
   Digit7:[1,0], Digit8:[1,1], Digit9:[1,2], Digit0:[1,3],
   Numpad1:[1,0], Numpad2:[1,1], Numpad3:[1,2], Numpad4:[1,3],
 };
-const COLORS = [
-  { body:'#4e7cf6', dead:'#8d9bb8' },
-  { body:'#a855f7', dead:'#a996b8' },
+// Snake looks: a color plus a pattern for each player
+const PALETTE = [
+  { name:'blue', hex:'#4e7cf6' }, { name:'purple', hex:'#a855f7' }, { name:'orange', hex:'#f97316' },
+  { name:'pink', hex:'#ec4899' }, { name:'teal', hex:'#14b8a6' }, { name:'yellow', hex:'#eab308' },
+  { name:'slate', hex:'#475569' }, { name:'brown', hex:'#9a5b2e' },
 ];
+const PATTERNS = { classic:'Classic', stripes:'Stripes', spots:'Spots', rainbow:'Rainbow' };
+const validSkin = (k, dflt) => ({
+  c: k && isIdx(k.c, PALETTE.length) ? k.c : dflt.c,
+  p: k && has(PATTERNS, k.p) ? k.p : dflt.p,
+});
+const DEFAULT_SKINS = [{ c:0, p:'classic' }, { c:1, p:'classic' }];
+// Mix two #rrggbb colors (t = how much of b)
+function mix(a, b, t) {
+  const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
+  return '#' + pa.map((v, i) => Math.round(v + (pb[i] - v) * t).toString(16).padStart(2, '0')).join('');
+}
 const GOLD_EVERY = 8, GOLD_MS = 6000, GOLD_POINTS = 5, GOLD_GROW = 3;
 const TEAM_MS = 1500, TEAM_BONUS = 2, ROCK_MAX = .16, EMOTE_MS = 2200;
 // How far back (in time) a late key press from an online friend can still count
@@ -236,11 +260,28 @@ const rockBorn = new Map();
 // Per-player looks that only exist on screen (mouth, blinking, emote bubbles)
 const looks = [0, 1].map(() => ({ mouth:0, blinkAt:0, emote:-1, emoteAt:0, lastEmote:-1e9, hx:0, hy:0 }));
 
+// Saved snake looks: one for each local player, plus "mine" for online games
+function loadSkins() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem('coopSnakeSkins') || '{}') || {}; } catch (e) {}
+  const local = Array.isArray(saved.local) ? saved.local : [];
+  return { local: [validSkin(local[0], DEFAULT_SKINS[0]), validSkin(local[1], DEFAULT_SKINS[1])], online: validSkin(saved.online, DEFAULT_SKINS[0]) };
+}
+const savedSkins = loadSkins();
+let skins = savedSkins.local.map(k => ({ ...k })); // the looks in the current game
+const saveSkins = () => { try { localStorage.setItem('coopSnakeSkins', JSON.stringify(savedSkins)); } catch (e) {} };
+const skinHex = id => PALETTE[skins[id].c].hex;
+const skinDead = id => mix(skinHex(id), '#a3a8b0', .6);
+// Online, two players might pick the same color; the friend's snake then switches to the next free one
+function fixClash() {
+  if (skins[1].c === skins[0].c) skins[1] = { ...skins[1], c: (skins[0].c + 1) % PALETTE.length };
+}
+
 // Online: 'local' = same keyboard, 'host' runs the game, 'guest' mirrors the host.
 let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '';
 let recording = false, outFx = [], inputSeq = 0, unacked = [], hostLastSeq = 0, forceOverlay = false;
 let inbox = [], applyAt = 0, lastN = -1, pingMs = null, hostPingSeen = 0;
-const PEER_PREFIX = 'coop-snake-v2-';
+const PEER_PREFIX = 'coop-snake-v3-';
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
@@ -300,7 +341,7 @@ document.addEventListener('fullscreenchange', fit);
 
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
-  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[] };
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0 };
 }
 
 function reset() {
@@ -365,8 +406,8 @@ function respawnSnake(s) {
     const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
     const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
     if (body.every(isFree) && ahead.every(isFree)) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true });
-      burst(body[0], COLORS[s.id].body, 16, 3);
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0 });
+      burst(body[0], skinHex(s.id), 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
     }
@@ -405,7 +446,7 @@ function tick() {
   }
   const movers = live.filter(s => s.next);
   for (const s of movers) {
-    s.body.unshift(s.next);
+    s.body.unshift(s.next); s.moves++;
     if (s.pending > 0) { s.pending--; s.popped = null; } else s.popped = s.body.pop();
   }
   const dying = peaceful ? [] : movers.filter(s => {
@@ -418,7 +459,7 @@ function tick() {
   for (const s of dying) {
     s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = []; s.log = [];
     s.respawn = RESPAWN_TICKS;
-    burst(s.body[0], COLORS[s.id].body, 22, 4);
+    burst(s.body[0], skinHex(s.id), 22, 4);
     doShake();
   }
   if (dying.length) beep(160, .25, 0, 'sawtooth');
@@ -807,9 +848,55 @@ function playerName(i) {
 }
 function setStatus(html) { $('onStatus').innerHTML = html; }
 function send(m) { if (connected()) { try { conn.send(m); } catch (e) {} } }
-const youAre = () => role === 'guest'
-  ? '<span class="dot" style="background:var(--p2)"></span> You are <b>purple</b>'
-  : '<span class="dot" style="background:var(--p1)"></span> You are <b>blue</b>';
+const youAre = () => `<span class="dot" style="background:var(--p${me() + 1})"></span> You are <b>${PALETTE[skins[me()].c].name}</b>`;
+
+// Show the current looks in the top bar and menu
+function applySkins() {
+  skins.forEach((k, i) => document.documentElement.style.setProperty('--p' + (i + 1), PALETTE[k.c].hex));
+  renderMenu();
+}
+
+function renderSkinPanel() {
+  const panel = $('skinPanel');
+  if (panel.hidden) return;
+  const slots = uiMode === 'local' ? [[0, 'P1'], [1, 'P2']] : [[me(), 'You']];
+  panel.innerHTML = slots.map(([slot, label]) => {
+    const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1;
+    return `<div class="skin-row"><b>${label}</b>
+      <div class="swatches">${PALETTE.map((c, i) => `<button class="swatch${k.c === i ? ' on' : ''}" data-slot="${slot}" data-c="${i}"
+        style="background:${c.hex}" title="${c.name}" aria-label="${c.name}"${taken === i ? ' disabled' : ''}></button>`).join('')}</div>
+      <div class="seg">${Object.entries(PATTERNS).map(([p, name]) =>
+        `<button data-slot="${slot}" data-pat="${p}" class="${k.p === p ? 'on' : ''}">${name}</button>`).join('')}</div></div>`;
+  }).join('');
+}
+
+function setSkin(slot, k) {
+  skins[slot] = k;
+  if (uiMode === 'local') savedSkins.local[slot] = k;
+  else {
+    savedSkins.online = k;
+    if (role === 'host') { fixClash(); sendState(); }
+    else if (role === 'guest') send({ t:'skin', c:k.c, p:k.p });
+  }
+  saveSkins();
+  applySkins();
+}
+
+$('skinBtn').addEventListener('click', e => {
+  e.currentTarget.blur();
+  const open = $('skinPanel').hidden;
+  $('skinPanel').hidden = !open;
+  $('settings').hidden = open; // swap the settings out while picking looks, to save space
+  $('skinBtn').textContent = open ? '✓ Done' : '🎨 Snake looks';
+  renderSkinPanel();
+});
+$('skinPanel').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b || b.disabled) return;
+  b.blur();
+  const slot = +b.dataset.slot, cur = skins[slot];
+  setSkin(slot, validSkin({ c: b.dataset.c !== undefined ? +b.dataset.c : cur.c, p: b.dataset.pat || cur.p }, cur));
+});
 
 function renderMenu() {
   const online = uiMode === 'online', on = connected();
@@ -830,6 +917,7 @@ function renderMenu() {
     : `You pick the settings · ${common}`;
   $('pn1').textContent = playerName(0); $('pn2').textContent = playerName(1);
   $('emoteBar').hidden = !(role !== 'local' && on);
+  renderSkinPanel();
   renderPing();
   fit();
 }
@@ -847,7 +935,9 @@ $('modeSeg').addEventListener('click', e => {
   if (b.dataset.mode === uiMode) return;
   if (role !== 'local') leaveOnline('');
   uiMode = b.dataset.mode;
-  state = 'ready'; reset(); showIntro();
+  skins = uiMode === 'local' ? savedSkins.local.map(k => ({ ...k })) : [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }];
+  fixClash();
+  state = 'ready'; reset(); showIntro(); applySkins();
 });
 
 function makeCode() {
@@ -877,7 +967,8 @@ function hostGame() {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'host'; roomCode = makeCode(); conn = null; pingMs = null;
-  setStatus('Creating room…'); renderMenu();
+  skins = [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }]; fixClash();
+  setStatus('Creating room…'); applySkins();
   peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
   peer.on('open', () => waitingStatus());
   peer.on('connection', c => {
@@ -913,7 +1004,8 @@ function joinGame(code) {
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
   inbox = []; lastN = -1; pingMs = null;
-  setStatus('Connecting…'); renderMenu();
+  skins = [{ ...DEFAULT_SKINS[0] }, { ...savedSkins.online }];
+  setStatus('Connecting…'); applySkins();
   const myPeer = peer = new Peer({ debug:0 });
   const timeout = setTimeout(() => {
     if (peer === myPeer && !connected()) leaveOnline(`Couldn't reach room ${code}. Check the code and try again.`);
@@ -926,6 +1018,7 @@ function joinGame(code) {
       setStatus(`Connected to room <b>${code}</b>! Waiting for the host to start…`);
       renderMenu();
       send({ t:'ping', ts: performance.now() });
+      send({ t:'skin', c: savedSkins.online.c, p: savedSkins.online.p });
     });
     c.on('data', m => {
       if (!m || typeof m !== 'object') return;
@@ -958,7 +1051,9 @@ function leaveOnline(msg) {
   try { oldConn && oldConn.close(); } catch (e) {}
   try { oldPeer && oldPeer.destroy(); } catch (e) {}
   cfg = loadCfg();
-  state = 'ready'; reset(); showIntro();
+  skins = uiMode === 'local' ? savedSkins.local.map(k => ({ ...k })) : [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }];
+  fixClash();
+  state = 'ready'; reset(); showIntro(); applySkins();
   setStatus(msg || '');
 }
 
@@ -973,10 +1068,10 @@ setInterval(() => { if (role === 'guest' && connected()) send({ t:'ping', ts: pe
 function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   send({
-    t:'state', n: tickNo, state, cfg, score, apples, rocks, stats, pausedT, ack: hostLastSeq,
+    t:'state', n: tickNo, state, cfg, score, apples, rocks, stats, skins, pausedT, ack: hostLastSeq,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
-      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log })),
+      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves })),
     fx: outFx,
   });
   outFx = [];
@@ -1003,6 +1098,9 @@ function onHostData(m) {
       else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
       break;
     case 'quit': endGame(); break;
+    case 'skin':
+      skins[1] = validSkin(m, skins[1]); fixClash(); applySkins(); sendState();
+      break;
     case 'emote': if (isIdx(m.i, EMOTES.length)) showEmote(1, m.i); break;
     case 'ping': {
       const now = performance.now();
@@ -1058,6 +1156,7 @@ function cleanState(m) {
         return o;
       }),
       rocks: arr(m.rocks, cells).map(cellOf),
+      skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, 2)[i], d)),
       stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells) },
       snakes: list.map((s, id) => {
         s = s && typeof s === 'object' ? s : {};
@@ -1066,7 +1165,7 @@ function cleanState(m) {
         return {
           id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
-          pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1),
+          pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1), moves: int(s.moves, 0, 1e9),
           log: arr(s.log, 8).map(r => r && typeof r === 'object'
             ? { tail: r.tail ? cellOf(r.tail) : null, turn: r.turn === true, ate: r.ate === true, ok: r.ok === true }
             : { tail: null, turn: false, ate: false, ok: false }),
@@ -1109,6 +1208,7 @@ function applyState(m) {
   const prev = state, now = performance.now();
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
+  if (JSON.stringify(m.skins) !== JSON.stringify(skins)) { skins = m.skins; applySkins(); }
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
   // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
   unacked = unacked.filter(u => u.seq > m.ack);
@@ -1272,7 +1372,10 @@ function drawSnake(s, t, now) {
 
   ctx.save();
   if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(now / 120);
-  const color = s.alive ? COLORS[s.id].body : COLORS[s.id].dead;
+  // Each body square keeps its own number (from when the head made it), so patterns stay put on the body
+  const pattern = s.alive ? skins[s.id].p : 'classic';
+  const hue = id => `hsl(${(id * 22 % 360 + 360) % 360}, 85%, 58%)`;
+  const color = !s.alive ? skinDead(s.id) : pattern === 'rainbow' ? hue(s.moves + 1) : skinHex(s.id);
   ctx.strokeStyle = color; ctx.lineWidth = CELL * .78; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const run of runs) {
     const P = run.map(px);
@@ -1280,6 +1383,33 @@ function drawSnake(s, t, now) {
     for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
     if (P.length === 1) ctx.lineTo(P[0].x + .01, P[0].y);
     ctx.stroke();
+  }
+  if (pattern === 'rainbow') {
+    // Color each piece of the body by its square's number
+    for (let j = 0; j + 1 < pts.length; j++) {
+      const a = pts[j], c = pts[j + 1];
+      if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) continue;
+      const A = px(a), C = px(c);
+      ctx.strokeStyle = hue(s.moves - j);
+      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(C.x, C.y); ctx.stroke();
+    }
+  } else if (pattern !== 'classic') {
+    const base = skinHex(s.id);
+    for (let i = 1; i < keep; i++) {
+      const c = px(b[i]), f = toward(b[i], b[i - 1], 1);
+      const ux = f.x - b[i].x, uy = f.y - b[i].y, perpX = -uy * CELL, perpY = ux * CELL;
+      const even = ((s.moves - i) & 1) === 0;
+      if (pattern === 'stripes') {
+        if (!even) continue;
+        ctx.strokeStyle = mix(base, '#ffffff', .6); ctx.lineWidth = CELL * .36; ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(c.x - perpX * .37, c.y - perpY * .37); ctx.lineTo(c.x + perpX * .37, c.y + perpY * .37); ctx.stroke();
+      } else {
+        ctx.fillStyle = mix(base, '#000000', .42);
+        const side = even ? .15 : -.15;
+        ctx.beginPath(); ctx.arc(c.x + perpX * side, c.y + perpY * side, CELL * .13, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+    ctx.lineCap = 'round';
   }
 
   const ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
@@ -1347,7 +1477,7 @@ function drawEmotes(now) {
     ctx.save();
     ctx.globalAlpha = age > EMOTE_MS - 300 ? Math.max(0, (EMOTE_MS - age) / 300) : 1;
     ctx.translate(x, y); ctx.scale(pop, pop);
-    ctx.fillStyle = '#fff'; ctx.strokeStyle = COLORS[i].body; ctx.lineWidth = 3;
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = skinHex(i); ctx.lineWidth = 3;
     ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
     ctx.font = `${CELL * .55}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1435,6 +1565,7 @@ function frame(now) {
 $('muteBtn').textContent = muted ? '🔇' : '🔊';
 reset();
 showIntro();
+applySkins();
 requestAnimationFrame(frame);
 
 // Opened from an invite link (…/#join=CODE)? Jump straight into that room.
