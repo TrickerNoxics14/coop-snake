@@ -97,6 +97,17 @@
   }
   .emotes button:hover { background:rgba(255,255,255,.18); }
   .hint { font-size:12px; opacity:.7; text-align:center; margin-top:8px; }
+  /* Animations */
+  @keyframes bump { 0% { transform:scale(1); } 35% { transform:scale(1.4); } 100% { transform:scale(1); } }
+  .bump { display:inline-block; animation:bump .32s ease-out; }
+  @keyframes fadeIn { from { opacity:0; } to { opacity:1; } }
+  @keyframes popIn { from { opacity:0; transform:translateY(12px) scale(.96); } to { opacity:1; transform:none; } }
+  .overlay:not(.hidden) { animation:fadeIn .2s ease-out; }
+  .overlay:not(.hidden) .ov-inner { animation:popIn .3s ease-out; }
+  #fx { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:5; border-radius:inherit; }
+  .confetti { position:absolute; top:-14px; width:8px; height:13px; border-radius:2px; animation:fall linear forwards; }
+  @keyframes fall { to { transform:translate(var(--dx), var(--dy)) rotate(var(--rot)); opacity:.1; } }
+  @media (prefers-reduced-motion: reduce) { .overlay, .ov-inner, .bump, .confetti { animation:none !important; } }
   @media (max-width:560px) {
     .overlay { padding:10px; }
     .ov-inner { gap:8px; }
@@ -125,6 +136,7 @@
   </div>
   <div class="stage" id="stage">
     <canvas id="c"></canvas>
+    <div id="fx"></div>
     <div class="overlay" id="overlay">
       <div class="ov-inner">
         <h1 id="ovTitle">Co-op Snake</h1>
@@ -260,7 +272,8 @@ const overlay = $('overlay');
 let snakes, apples, rocks = [], score, best = 0, bestAtStart = 0, goldCounter = 0, tickNo = 0;
 let stats = { rescues:0, teamwork:0, longest:0 }, lastEat = [-99, -99];
 let state = 'ready', lastTick = 0, pausedT = 0, countEnd = 0, lastCount = 0, overAt = 0;
-let particles = [], popups = [], shake = 0, frameK = 1;
+let particles = [], popups = [], waves = [], shake = 0, frameK = 1;
+const appleBorn = new Map(); // when each apple first appeared, for its pop-in
 let muted = false;
 try { muted = localStorage.getItem('coopSnakeMuted') === '1'; } catch (e) {}
 const rockBorn = new Map();
@@ -416,7 +429,7 @@ function reset() {
   if (cfg.game === 'poison') movePoison();
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99];
   stats = { rescues:0, teamwork:0, longest:4 };
-  particles = []; popups = []; shake = 0;
+  particles = []; popups = []; waves = []; shake = 0;
   updateHud();
 }
 
@@ -716,7 +729,17 @@ function lateTurn(slot, dir, at) {
   return true;
 }
 
+// Restart a CSS "bump" animation on an element
+function bump(el) { el.classList.remove('bump'); void el.offsetWidth; el.classList.add('bump'); }
+const shown = { score: 0, apples: {} };
+
 function updateHud() {
+  if (score > shown.score) bump($('score'));
+  shown.score = score;
+  for (const s of snakes) {
+    if (s.apples > (shown.apples[s.id] ?? s.apples)) bump($('p' + (s.id + 1)));
+    shown.apples[s.id] = s.apples;
+  }
   $('score').textContent = score;
   for (let id = 0; id < MAX_PLAYERS; id++) {
     const s = snakeOf(id);
@@ -764,6 +787,7 @@ function showIntro() { showOverlay('Co-op Snake', INTRO, role === 'guest' ? 'Sta
 
 function showGameOver() {
   const isBest = score > 0 && score > bestAtStart;
+  if (isBest) { confetti(); beep(784, .1); beep(988, .1, .1); beep(1319, .2, .2); }
   const secs = Math.round(tickNo * TICK / 1000);
   const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   showOverlay(isBest ? 'New best! 🏆' : cfg.game === 'peaceful' ? 'Well played!' : 'Game over',
@@ -771,6 +795,24 @@ function showGameOver() {
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
      <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
     'Play again');
+}
+
+// A shower of confetti over the board (used for a new best score)
+function confetti() {
+  const box = $('fx'), colors = ['#ffd54a', '#e7471d', '#4e7cf6', '#a855f7', '#14b8a6', '#ec4899', '#ffffff'];
+  for (let i = 0; i < 60; i++) {
+    const c = document.createElement('span'), dur = rand(1.4, 2.6);
+    c.className = 'confetti';
+    c.style.left = rand(0, 100) + '%';
+    c.style.background = colors[i % colors.length];
+    c.style.animationDuration = dur + 's';
+    c.style.animationDelay = rand(0, .5) + 's';
+    c.style.setProperty('--dx', rand(-60, 60) + 'px');
+    c.style.setProperty('--dy', box.clientHeight + 30 + 'px');
+    c.style.setProperty('--rot', rand(-720, 720) + 'deg');
+    box.appendChild(c);
+    setTimeout(() => c.remove(), (dur + .6) * 1000);
+  }
 }
 
 function gameOver() { state = 'over'; overAt = performance.now(); showGameOver(); sendState(); }
@@ -1410,6 +1452,8 @@ function beep(freq, dur, delay = 0, type = 'square') {
 // ---------- Effects ----------
 function burst(cell, color, n, speed) {
   if (recording) outFx.push(['burst', [{ x:cell.x, y:cell.y }, color, n, speed]]);
+  // bigger bursts (eating, crashing, coming back) also send out a ring
+  if (n >= 12) waves.push({ x:(cell.x + .5) * CELL, y:(cell.y + .5) * CELL, color, life:1 });
   for (let i = 0; i < n; i++) {
     const a = rand(0, Math.PI * 2), v = rand(.3, 1) * speed;
     particles.push({ x:(cell.x + .5) * CELL, y:(cell.y + .5) * CELL, vx:Math.cos(a) * v, vy:Math.sin(a) * v,
@@ -1456,7 +1500,32 @@ function drawRock(r, now) {
   ctx.beginPath(); ctx.moveTo(cx + s * .15, cy - s * .1); ctx.lineTo(cx + s * .45, cy + s * .25); ctx.stroke();
 }
 
+// Apples pop in when they appear and bob gently; golden ones sparkle
 function drawApple(a, now) {
+  const key = a.x + ',' + a.y + (a.poison ? 'p' : a.gold ? 'g' : '');
+  if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, now); }
+  const t = Math.min(1, (now - appleBorn.get(key)) / 320), u = t - 1;
+  const pop = 1 + 2.7 * u * u * u + 1.7 * u * u;
+  if (pop <= 0) return;
+  const cx = (a.x + .5) * CELL, cy = (a.y + .5) * CELL, bob = Math.sin(now / 420 + a.x * 1.7 + a.y) * CELL * .035;
+  ctx.save();
+  ctx.translate(cx, cy + bob); ctx.scale(pop, pop); ctx.translate(-cx, -cy);
+  drawAppleShape(a, now);
+  if (a.gold) {
+    for (let k = 0; k < 3; k++) {
+      const ang = now / 520 + k * 2.09, tw = .5 + .5 * Math.sin(now / 130 + k * 2);
+      const sx = cx + Math.cos(ang) * CELL * .55, sy = cy + Math.sin(ang) * CELL * .55, r = CELL * .07 * (.5 + tw);
+      ctx.fillStyle = `rgba(255,248,200,${.5 + .5 * tw})`;
+      ctx.beginPath(); // four-point twinkle
+      ctx.moveTo(sx, sy - r * 2); ctx.lineTo(sx + r * .5, sy - r * .5); ctx.lineTo(sx + r * 2, sy); ctx.lineTo(sx + r * .5, sy + r * .5);
+      ctx.lineTo(sx, sy + r * 2); ctx.lineTo(sx - r * .5, sy + r * .5); ctx.lineTo(sx - r * 2, sy); ctx.lineTo(sx - r * .5, sy - r * .5);
+      ctx.fill();
+    }
+  }
+  ctx.restore();
+}
+
+function drawAppleShape(a, now) {
   if (a.gold && a.ttl < 16 && Math.floor(now / 110) % 2) return; // blink before vanishing
   const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
   const r = CELL * .36 * (1 + Math.sin(now / (a.gold ? 120 : 250)) * (a.gold ? .07 : .03));
@@ -1555,17 +1624,28 @@ function drawSnake(s, t, now) {
 
   ctx.save();
   if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(now / 120);
+  const sinceSpawn = now - (L.spawnAt || -1e9), sinceDeath = now - (L.dieAt || -1e9);
+  if (s.alive && sinceSpawn < 450) ctx.globalAlpha = .2 + .8 * sinceSpawn / 450; // fades in when it appears
   // Each body square keeps its own number (from when the head made it), so patterns stay put on the body
   const pattern = s.alive ? skins[s.id].p : 'classic';
   const hue = id => `hsl(${(id * 22 % 360 + 360) % 360}, 85%, 58%)`;
   const color = !s.alive ? skinDead(s.id) : pattern === 'rainbow' ? hue(s.moves + 1) : skinHex(s.id);
   ctx.strokeStyle = color; ctx.lineWidth = CELL * .78; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-  for (const run of runs) {
-    const P = run.map(px);
-    ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
-    for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
-    if (P.length === 1) ctx.lineTo(P[0].x + .01, P[0].y);
-    ctx.stroke();
+  const strokeRuns = () => {
+    for (const run of runs) {
+      const P = run.map(px);
+      ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
+      for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
+      if (P.length === 1) ctx.lineTo(P[0].x + .01, P[0].y);
+      ctx.stroke();
+    }
+  };
+  strokeRuns();
+  if (!s.alive && sinceDeath < 320) { // flashes white as it crashes
+    const a = ctx.globalAlpha;
+    ctx.globalAlpha = (1 - sinceDeath / 320) * .9; ctx.strokeStyle = '#ffffff';
+    strokeRuns();
+    ctx.globalAlpha = a; ctx.strokeStyle = color;
   }
   if (pattern === 'rainbow') {
     // Color each piece of the body by its square's number
@@ -1615,6 +1695,18 @@ function drawSnake(s, t, now) {
       const open = L.mouth * .7;
       ctx.fillStyle = '#3d1414';
       ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.arc(h.x, h.y, headR * .97, ang - open, ang + open); ctx.closePath(); ctx.fill();
+    }
+    // Every few seconds the tongue flicks out (each snake on its own rhythm)
+    const flick = (now + s.id * 977) % 3400;
+    if (s.alive && L.mouth < .1 && flick < 280) {
+      const out = Math.sin(Math.PI * flick / 280), base = headR * .85, len = CELL * .32 * out;
+      const tx = h.x + d.x * (base + len), ty = h.y + d.y * (base + len), fork = CELL * .08 * out;
+      ctx.strokeStyle = '#e8364f'; ctx.lineWidth = CELL * .05; ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(h.x + d.x * base, h.y + d.y * base); ctx.lineTo(tx, ty);
+      ctx.moveTo(tx, ty); ctx.lineTo(tx + d.x * fork - d.y * fork, ty + d.y * fork + d.x * fork);
+      ctx.moveTo(tx, ty); ctx.lineTo(tx + d.x * fork + d.y * fork, ty + d.y * fork - d.x * fork);
+      ctx.stroke();
     }
     const back = CELL * (.12 - .07 * L.mouth);
     const fx = h.x + d.x * back, fy = h.y + d.y * back;
@@ -1670,14 +1762,23 @@ function drawEmotes(now) {
 }
 
 function drawEffects(k) {
+  for (const w of waves) { // expanding rings
+    w.life -= .045 * k;
+    ctx.globalAlpha = Math.max(0, w.life) * .8; ctx.strokeStyle = w.color; ctx.lineWidth = CELL * .09 * w.life + 1;
+    ctx.beginPath(); ctx.arc(w.x, w.y, CELL * (.35 + (1 - w.life) * 1.1), 0, Math.PI * 2); ctx.stroke();
+  }
+  waves = waves.filter(w => w.life > 0);
   for (const p of particles) {
     p.x += p.vx * k; p.y += p.vy * k; p.vx *= .94; p.vy = p.vy * .94 + .08 * k; p.life -= p.decay * k;
     ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color;
     ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
   }
-  ctx.textAlign = 'center'; ctx.font = `bold ${CELL * .5}px Roboto, Arial`;
+  ctx.textAlign = 'center';
   for (const p of popups) {
     p.y -= .7 * k; p.life -= .018 * k;
+    // pops in a little big, then settles
+    const grow = p.life > .85 ? 1 + (p.life - .85) * 2.5 : 1;
+    ctx.font = `bold ${CELL * .5 * grow}px Roboto, Arial`;
     ctx.globalAlpha = Math.max(0, p.life);
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.strokeText(p.text, p.x, p.y);
     ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y);
@@ -1736,6 +1837,13 @@ function frame(now) {
   rocks.forEach(r => drawRock(r, now));
   drawPortals(now);
   apples.forEach(a => drawApple(a, now));
+  // Notice snakes appearing or crashing, to animate it (works the same on every player's screen)
+  for (const s of snakes) {
+    const L = looks[s.id];
+    if (L.wasAlive === false && s.alive) L.spawnAt = now;
+    if (L.wasAlive === true && !s.alive) L.dieAt = now;
+    L.wasAlive = s.alive;
+  }
   snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t, now));
   snakes.filter(s => s.alive).forEach(s => drawSnake(s, t, now));
   drawPortals(now, true);
