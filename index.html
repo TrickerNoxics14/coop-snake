@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Co-op Snake</title>
+<!-- Pinned with a hash so a tampered copy from the CDN is refused -->
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
+  integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"
+  crossorigin="anonymous"></script>
+<style>
+  :root { --header:#4a752c; --border:#578a34; --p1:#4e7cf6; --p2:#a855f7; }
+  * { box-sizing:border-box; }
+  [hidden] { display:none !important; }
+  body {
+    margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background:#1c2616; font-family:Roboto, "Segoe UI", Arial, sans-serif; color:#fff;
+    user-select:none; -webkit-user-select:none;
+  }
+  .wrap { width:min(94vw, 680px); padding:12px 0; }
+  .hud {
+    background:var(--header); display:flex; align-items:center; gap:16px; flex-wrap:wrap;
+    padding:10px 18px; border-radius:10px 10px 0 0; font-size:22px; font-weight:700;
+  }
+  .hud .item { display:flex; align-items:center; gap:6px; }
+  .hud .spacer { flex:1; }
+  .pl { font-size:14px; font-weight:600; display:flex; align-items:center; gap:6px; opacity:.95; }
+  .pl.down { opacity:.6; }
+  .dot { width:12px; height:12px; border-radius:50%; display:inline-block; flex:none; }
+  .stage { position:relative; background:var(--border); padding:14px; border-radius:0 0 10px 10px; touch-action:none; }
+  canvas { display:block; width:100%; height:auto; }
+  .overlay {
+    position:absolute; inset:14px; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; gap:12px; background:rgba(20,40,10,.66); text-align:center;
+    padding:16px; overflow:auto;
+  }
+  .overlay.hidden { display:none; }
+  .overlay h1 { margin:0; font-size:34px; }
+  .overlay p { margin:0; font-size:15px; line-height:1.5; }
+  .keys { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
+  .keys div { background:rgba(0,0,0,.3); padding:8px 14px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:6px; }
+  .settings { display:grid; grid-template-columns:auto auto; gap:8px 12px; align-items:center; font-size:14px; }
+  .settings > span { text-align:right; opacity:.85; }
+  .settings.locked { opacity:.55; pointer-events:none; }
+  .seg { display:inline-flex; background:rgba(0,0,0,.3); border-radius:8px; padding:3px; }
+  .seg button {
+    background:none; border:0; color:#fff; font:inherit; font-size:13px; padding:5px 11px;
+    border-radius:6px; cursor:pointer; opacity:.75;
+  }
+  .seg button.on { background:#fff; color:#2d4d1a; font-weight:700; opacity:1; }
+  .modes button { font-size:14px; padding:6px 16px; }
+  .paused .menu-only { display:none !important; }
+  .online { display:flex; flex-direction:column; align-items:center; gap:10px; }
+  .online .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .btn { background:#1a73e8; border:0; color:#fff; font-size:17px; font-weight:700; padding:10px 30px; border-radius:6px; cursor:pointer; }
+  .btn:hover { background:#2b82f5; }
+  .btn2 { background:#fff; color:#2d4d1a; border:0; font-size:14px; font-weight:700; padding:8px 16px; border-radius:6px; cursor:pointer; }
+  .btn2:hover { background:#e8f3dc; }
+  .link { background:none; border:0; color:#fff; text-decoration:underline; opacity:.8; cursor:pointer; font-size:13px; }
+  #codeIn {
+    width:130px; font-size:18px; font-weight:700; letter-spacing:4px; text-transform:uppercase; text-align:center;
+    padding:6px; border-radius:6px; border:0; background:rgba(0,0,0,.35); color:#fff; outline:none;
+  }
+  #codeIn:focus { box-shadow:0 0 0 2px #fff; }
+  .status { font-size:14px; line-height:1.5; min-height:1em; }
+  .code { font-size:26px; letter-spacing:6px; background:rgba(0,0,0,.35); padding:2px 12px; border-radius:6px; user-select:all; -webkit-user-select:all; }
+  .small { font-size:12px !important; opacity:.75; }
+  .hint { font-size:12px; opacity:.7; text-align:center; margin-top:8px; }
+  @media (max-width:560px) {
+    .overlay { gap:8px; padding:10px; justify-content:flex-start; }
+    .overlay h1 { font-size:24px; }
+    .overlay p { font-size:13px; }
+    .hud { font-size:18px; padding:8px 12px; gap:10px; }
+    .seg button { padding:4px 7px; font-size:12px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hud">
+    <div class="item">🍎 <span id="score">0</span></div>
+    <div class="item">🏆 <span id="best">0</span></div>
+    <div class="spacer"></div>
+    <div class="pl" id="pl1"><span class="dot" style="background:var(--p1)"></span><span id="pn1">P1</span> <span id="p1">0</span></div>
+    <div class="pl" id="pl2"><span class="dot" style="background:var(--p2)"></span><span id="pn2">P2</span> <span id="p2">0</span></div>
+  </div>
+  <div class="stage" id="stage">
+    <canvas id="c"></canvas>
+    <div class="overlay" id="overlay">
+      <h1 id="ovTitle">Co-op Snake</h1>
+      <p id="ovText"></p>
+      <div class="seg modes menu-only" id="modeSeg">
+        <button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
+      </div>
+      <div class="online menu-only" id="onlinePanel" hidden>
+        <div class="row" id="onIdle">
+          <button class="btn2" id="hostBtn">Host a game</button>
+          <span style="opacity:.7">or</span>
+          <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">
+          <button class="btn2" id="joinBtn">Join</button>
+        </div>
+        <div class="status" id="onStatus"></div>
+        <button class="link" id="leaveBtn" hidden>Leave online game</button>
+      </div>
+      <div class="keys menu-only" id="keys"></div>
+      <div class="settings menu-only" id="settings">
+        <span>Speed</span>
+        <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
+        <span>Apples</span>
+        <div class="seg" data-key="apples"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
+        <span>Board</span>
+        <div class="seg" data-key="board"><button data-v="small">Small</button><button data-v="medium">Medium</button><button data-v="large">Large</button></div>
+        <span>Edges</span>
+        <div class="seg" data-key="mode"><button data-v="walls">Walls</button><button data-v="wrap">Wrap around</button></div>
+      </div>
+      <button class="btn" id="play">Play</button>
+      <p class="small menu-only" id="help"></p>
+    </div>
+  </div>
+  <div class="hint">Shared score · Don't run into walls, yourself, or your teammate</div>
+</div>
+
+<script>
+// ---------- Config ----------
+const SPEEDS = { slow:180, normal:135, fast:95 };
+const BOARDS = { small:[11,10], medium:[17,15], large:[24,21] };
+const CELL = 40, LIGHT = '#aad751', DARK = '#a2d149';
+const DIRS = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
+const OPP = { up:'down', down:'up', left:'right', right:'left' };
+const KEYMAP = {
+  KeyW:[0,'up'], KeyA:[0,'left'], KeyS:[0,'down'], KeyD:[0,'right'],
+  ArrowUp:[1,'up'], ArrowLeft:[1,'left'], ArrowDown:[1,'down'], ArrowRight:[1,'right'],
+};
+const COLORS = [
+  { body:'#4e7cf6', dead:'#8d9bb8' },
+  { body:'#a855f7', dead:'#a996b8' },
+];
+const GOLD_EVERY = 8, GOLD_MS = 6000, GOLD_POINTS = 5, GOLD_GROW = 3;
+const INTRO = `Eat apples together for a shared score.<br>
+  Crashed? You're back in 3s — or instantly when your teammate eats an apple.<br>
+  Grab the ✨ golden apple for +5 before it vanishes!`;
+
+const has = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
+const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls' };
+// Only ever accept known setting values (from storage or from an online host)
+function validCfg(c) {
+  c = c && typeof c === 'object' ? c : {};
+  return {
+    speed: has(SPEEDS, c.speed) ? c.speed : DEFAULT_CFG.speed,
+    apples: [1, 2, 3, 5].includes(c.apples) ? c.apples : DEFAULT_CFG.apples,
+    board: has(BOARDS, c.board) ? c.board : DEFAULT_CFG.board,
+    mode: c.mode === 'wrap' ? 'wrap' : 'walls',
+  };
+}
+function loadCfg() {
+  try { return validCfg(JSON.parse(localStorage.getItem('coopSnakeCfg') || '{}')); } catch (e) { return validCfg({}); }
+}
+let cfg = loadCfg();
+let COLS, ROWS, TICK, RESPAWN_TICKS;
+
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+const dpr = Math.max(1, window.devicePixelRatio || 1);
+const $ = id => document.getElementById(id);
+const overlay = $('overlay');
+
+let snakes, apples, score, best = 0, goldCounter = 0;
+let state = 'ready', lastTick = 0, pausedT = 0, countEnd = 0, lastCount = 0, muted = false;
+let particles = [], popups = [], shake = 0;
+
+// Online: 'local' = same keyboard, 'host' runs the game, 'guest' mirrors the host.
+let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '';
+let recording = false, outFx = [], inputSeq = 0, unacked = [], hostLastSeq = 0, forceOverlay = false;
+const PEER_PREFIX = 'coop-snake-v1-';
+
+const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}`;
+const eq = (a, b) => a.x === b.x && a.y === b.y;
+const inBounds = p => p.x >= 0 && p.y >= 0 && p.x < COLS && p.y < ROWS;
+const rand = (a, b) => a + Math.random() * (b - a);
+
+function step(p, dir) {
+  const d = DIRS[dir];
+  let x = p.x + d.x, y = p.y + d.y;
+  if (cfg.mode === 'wrap') { x = (x + COLS) % COLS; y = (y + ROWS) % ROWS; }
+  return { x, y };
+}
+
+// Move t of the way from a toward b, taking the short way across a wrapped edge.
+function toward(a, b, t) {
+  let dx = b.x - a.x, dy = b.y - a.y;
+  if (Math.abs(dx) > 1) dx = -Math.sign(dx);
+  if (Math.abs(dy) > 1) dy = -Math.sign(dy);
+  return { x: a.x + dx * t, y: a.y + dy * t };
+}
+
+function applyConfig() {
+  [COLS, ROWS] = BOARDS[cfg.board];
+  TICK = SPEEDS[cfg.speed];
+  RESPAWN_TICKS = Math.round(3000 / TICK);
+  canvas.width = COLS * CELL * dpr; canvas.height = ROWS * CELL * dpr;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  document.querySelectorAll('.seg[data-key]').forEach(seg => {
+    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(cfg[seg.dataset.key])));
+  });
+  try { best = +localStorage.getItem(bestKey()) || 0; } catch (e) { best = 0; }
+  $('best').textContent = best;
+}
+
+function makeSnake(id, y) {
+  const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0 };
+}
+
+function reset() {
+  applyConfig();
+  const y1 = Math.floor(ROWS * .3), y2 = ROWS - 1 - y1;
+  snakes = [makeSnake(0, y1), makeSnake(1, y2)];
+  apples = [{x:COLS - 5, y:y1}, {x:COLS - 5, y:y2}].slice(0, cfg.apples);
+  while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
+  score = 0; goldCounter = 0; particles = []; popups = []; shake = 0;
+  updateHud();
+}
+
+function occupied() {
+  const cells = [];
+  snakes.forEach(s => s.alive && cells.push(...s.body));
+  return cells.concat(apples);
+}
+
+function spawnApple(gold = false) {
+  const occ = occupied();
+  const free = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++)
+    if (!occ.some(c => c.x === x && c.y === y)) free.push({x,y});
+  if (!free.length) return;
+  const a = free[Math.random() * free.length | 0];
+  if (gold) { a.gold = true; a.ttl = Math.round(GOLD_MS / TICK); a.max = a.ttl; }
+  apples.push(a);
+  if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
+}
+
+function respawnSnake(s) {
+  const occ = occupied();
+  const isFree = p => inBounds(p) && !occ.some(c => eq(c, p));
+  for (let tries = 0; tries < 500; tries++) {
+    const x = 3 + (Math.random() * Math.max(1, COLS - 6) | 0), y = Math.random() * ROWS | 0;
+    const dir = x < COLS / 2 ? 'right' : 'left', d = DIRS[dir];
+    const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
+    const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
+    if (body.every(isFree) && ahead.every(isFree)) {
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1 });
+      burst(body[0], COLORS[s.id].body, 16, 3);
+      beep(520, .08); beep(780, .1, .08);
+      return true;
+    }
+  }
+  return false;
+}
+
+// ---------- Game logic (runs on local games and on the online host) ----------
+function tick() {
+  recording = true;
+  snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
+
+  apples.forEach(a => { if (a.gold) a.ttl--; });
+  apples.filter(a => a.gold && a.ttl <= 0).forEach(a => burst(a, '#ffd54a', 8, 1.5));
+  apples = apples.filter(a => !a.gold || a.ttl > 0);
+
+  const live = snakes.filter(s => s.alive);
+  for (const s of live) {
+    if (s.queue.length) s.dir = s.queue.shift();
+    s.next = step(s.body[0], s.dir);
+    s.appleIdx = apples.findIndex(a => eq(a, s.next));
+    s.oldBody = s.body.slice(); s.oldPending = s.pending;
+  }
+  for (const s of live) {
+    s.body.unshift(s.next);
+    if (s.pending > 0) s.pending--; else s.body.pop();
+  }
+  const dying = live.filter(s => {
+    const h = s.body[0];
+    return !inBounds(h)
+      || s.body.some((c, i) => i > 0 && eq(c, h))
+      || live.some(o => o !== s && o.body.some(c => eq(c, h)));
+  });
+  for (const s of dying) {
+    s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = [];
+    s.respawn = RESPAWN_TICKS;
+    burst(s.body[0], COLORS[s.id].body, 22, 4);
+    doShake();
+  }
+  if (dying.length) beep(160, .25, 0, 'sawtooth');
+
+  const eaten = new Set();
+  for (const s of live) {
+    if (!s.alive || s.appleIdx < 0 || eaten.has(s.appleIdx)) continue;
+    const a = apples[s.appleIdx];
+    eaten.add(s.appleIdx);
+    const pts = a.gold ? GOLD_POINTS : 1;
+    s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
+    burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
+    popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
+    if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
+    else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
+    // Co-op rescue: eating brings a downed teammate straight back
+    const mate = snakes[1 - s.id];
+    if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) popup(mate.body[0], 'Rescued!', '#fff');
+  }
+  if (eaten.size) {
+    apples = apples.filter((_, i) => !eaten.has(i));
+    while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
+    if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
+  }
+  recording = false;
+
+  if (!snakes.some(s => s.alive)) gameOver();
+  updateHud();
+  sendState();
+}
+
+function updateHud() {
+  $('score').textContent = score;
+  snakes.forEach((s, i) => {
+    const down = !s.alive && state !== 'over';
+    $('p' + (i + 1)).textContent = down ? `${s.apples} · back in ${Math.ceil(s.respawn * TICK / 1000)}s` : s.apples;
+    $('pl' + (i + 1)).classList.toggle('down', down);
+  });
+  if (score > best) {
+    best = score; $('best').textContent = best;
+    try { localStorage.setItem(bestKey(), best); } catch (e) {}
+  }
+}
+
+// ---------- Flow ----------
+function beginGame() {
+  reset();
+  state = 'countdown'; countEnd = performance.now() + 1800; lastCount = 0;
+  overlay.classList.add('hidden');
+  sendState();
+}
+
+function resume() {
+  lastTick = performance.now() - pausedT * TICK;
+  state = 'playing';
+  overlay.classList.add('hidden');
+  sendState();
+}
+
+function showOverlay(title, html, button, paused) {
+  $('ovTitle').textContent = title;
+  $('ovText').innerHTML = html;
+  $('play').textContent = button;
+  overlay.classList.toggle('paused', !!paused);
+  overlay.classList.remove('hidden');
+  renderMenu();
+}
+
+function showIntro() { showOverlay('Co-op Snake', INTRO, role === 'guest' ? 'Start' : 'Play'); }
+
+function showGameOver() {
+  const isBest = score > 0 && score >= best;
+  showOverlay(isBest ? 'New best! 🏆' : 'Game over',
+    `You ate <b>${score}</b> apple${score === 1 ? '' : 's'} together!<br>${playerName(0)}: ${snakes[0].apples} · ${playerName(1)}: ${snakes[1].apples}`,
+    'Play again');
+}
+
+function gameOver() { state = 'over'; showGameOver(); sendState(); }
+
+function togglePause() {
+  if (state === 'playing') {
+    pausedT = Math.min(1, (performance.now() - lastTick) / TICK);
+    state = 'paused';
+    showOverlay('Paused', 'Press Space to resume', 'Resume', true);
+    sendState();
+  } else if (state === 'paused') resume();
+}
+
+function spaceAction() {
+  if (state === 'playing' || state === 'paused') togglePause();
+  else if (state !== 'countdown') beginGame();
+}
+
+function queueDir(s, dir) {
+  const last = s.queue.length ? s.queue[s.queue.length - 1] : s.dir;
+  if (dir !== last && dir !== OPP[last] && s.queue.length < 3) { s.queue.push(dir); return true; }
+  return false;
+}
+
+function steer(player, dir) {
+  if (state === 'ready' || state === 'over') beginGame();
+  if (state !== 'playing' && state !== 'countdown') return;
+  const s = snakes[player];
+  if (s.alive) queueDir(s, dir);
+}
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') {
+    if (e.key === 'Enter') joinGame($('codeIn').value);
+    return;
+  }
+  const m = KEYMAP[e.code];
+  if (m || e.code === 'Space') e.preventDefault();
+  if (e.code === 'KeyM') { muted = !muted; return; }
+  const pause = e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyP' || e.code === 'Escape';
+
+  if (role === 'guest') {
+    if (!conn || !conn.open) return;
+    if (pause) send({ t:'space' });
+    else if (m) guestSteer(m[1]);
+    return;
+  }
+  if (uiMode === 'online' && !(conn && conn.open)) return; // waiting for a friend
+  if (pause) {
+    if (state === 'playing' || state === 'paused') togglePause();
+    else if (e.code !== 'Escape' && e.code !== 'KeyP' && state !== 'countdown') beginGame();
+    return;
+  }
+  // Online host controls P1 with either key set
+  if (m) steer(role === 'host' ? 0 : m[0], m[1]);
+});
+
+$('play').addEventListener('click', e => {
+  e.target.blur();
+  if (role === 'guest') send({ t:'start' });
+  else state === 'paused' ? resume() : beginGame();
+});
+
+document.querySelectorAll('.seg[data-key]').forEach(seg => seg.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b || role === 'guest') return;
+  b.blur();
+  const k = seg.dataset.key;
+  cfg[k] = k === 'apples' ? +b.dataset.v : b.dataset.v;
+  try { localStorage.setItem('coopSnakeCfg', JSON.stringify(cfg)); } catch (err) {}
+  reset();
+  sendState();
+}));
+
+// Touch: local = left half P1 / right half P2; online = anywhere steers your own snake
+const touches = {};
+function touchSteer(p, dir) {
+  if (role === 'guest') guestSteer(dir);
+  else if (role === 'host') { if (conn && conn.open) steer(0, dir); }
+  else if (uiMode === 'local') steer(p, dir);
+}
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) touches[t.identifier] = { x: t.clientX, y: t.clientY, p: t.clientX < innerWidth / 2 ? 0 : 1 };
+}, { passive:false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  for (const t of e.changedTouches) {
+    const s = touches[t.identifier];
+    if (!s) continue;
+    const dx = t.clientX - s.x, dy = t.clientY - s.y;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) continue;
+    touchSteer(s.p, Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+    s.x = t.clientX; s.y = t.clientY;
+  }
+}, { passive:false });
+canvas.addEventListener('touchend', e => { for (const t of e.changedTouches) delete touches[t.identifier]; });
+
+// ---------- Online ----------
+function playerName(i) {
+  if (role === 'local') return 'P' + (i + 1);
+  return (i === (role === 'guest' ? 1 : 0)) ? 'You' : 'Friend';
+}
+function setStatus(html) { $('onStatus').innerHTML = html; }
+function send(m) { if (conn && conn.open) { try { conn.send(m); } catch (e) {} } }
+const youAre = () => role === 'guest'
+  ? '<span class="dot" style="background:var(--p2)"></span> You are <b>purple</b>'
+  : '<span class="dot" style="background:var(--p1)"></span> You are <b>blue</b>';
+
+function renderMenu() {
+  const online = uiMode === 'online', connected = !!(conn && conn.open);
+  $('modeSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.mode === uiMode));
+  $('onlinePanel').hidden = !online;
+  $('onIdle').hidden = role !== 'local';
+  $('leaveBtn').hidden = role === 'local';
+  $('play').hidden = online && !connected;
+  $('settings').classList.toggle('locked', role === 'guest');
+  $('keys').hidden = online && !connected;
+  $('keys').innerHTML = online
+    ? `<div>${youAre()} · steer with W A S D or the arrow keys</div>`
+    : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D</div>
+       <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys</div>`;
+  $('help').innerHTML = online
+    ? (role === 'guest' ? 'The host picks the settings · Space to pause · M to mute'
+                        : 'Space to pause · M to mute · keep this tab in front while hosting')
+    : 'Any movement key starts · Space / P to pause · M to mute<br>Touch: swipe on the left half for P1, right half for P2';
+  $('pn1').textContent = playerName(0); $('pn2').textContent = playerName(1);
+}
+
+$('modeSeg').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  if (b.dataset.mode === uiMode) return;
+  if (role !== 'local') leaveOnline('');
+  uiMode = b.dataset.mode;
+  state = 'ready'; reset(); showIntro();
+});
+
+function makeCode() {
+  const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  // Secure random so codes can't be predicted
+  return Array.from(crypto.getRandomValues(new Uint32Array(6)), n => A[n % A.length]).join('');
+}
+
+function hostGame() {
+  if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
+  if (peer) try { peer.destroy(); } catch (e) {}
+  role = 'host'; roomCode = makeCode(); conn = null;
+  setStatus('Creating room…'); renderMenu();
+  peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
+  peer.on('open', () => {
+    setStatus(`Room code: <span class="code">${roomCode}</span><br>Send this code to your friend. Waiting for them to join…`);
+  });
+  peer.on('connection', c => {
+    if (conn && conn.open) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
+    conn = c; hostLastSeq = 0;
+    c.on('open', () => {
+      state = 'ready'; reset(); showIntro();
+      setStatus(`Friend connected to room <b>${roomCode}</b>! Press Play when you're ready.`);
+      renderMenu(); sendState();
+    });
+    c.on('data', onHostData);
+    c.on('close', () => {
+      if (conn !== c) return;
+      conn = null;
+      if (role !== 'host') return;
+      state = 'ready'; reset(); showIntro();
+      setStatus(`Your friend left. Room code: <span class="code">${roomCode}</span><br>Waiting for someone to join…`);
+    });
+  });
+  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
+  peer.on('error', e => {
+    if (e.type === 'unavailable-id') hostGame();
+    else if (e.type !== 'peer-unavailable') leaveOnline(`Online error (${e.type}). Try again.`);
+  });
+}
+
+function joinGame(code) {
+  code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (code.length !== 6) return setStatus('Enter the 6-character room code.');
+  if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
+  if (peer) try { peer.destroy(); } catch (e) {}
+  role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
+  setStatus('Connecting…'); renderMenu();
+  const myPeer = peer = new Peer({ debug:0 });
+  const timeout = setTimeout(() => { if (peer === myPeer && !(conn && conn.open)) leaveOnline(`Couldn't reach room ${code}. Check the code and try again.`); }, 15000);
+  peer.on('open', () => {
+    const c = conn = peer.connect(PEER_PREFIX + code, { reliable:true, serialization:'json' });
+    c.on('open', () => {
+      clearTimeout(timeout);
+      forceOverlay = true;
+      setStatus(`Connected to room <b>${code}</b>! Waiting for the host to start…`);
+      renderMenu();
+    });
+    c.on('data', m => {
+      if (!m || typeof m !== 'object') return;
+      if (m.t === 'state') applyState(m);
+      else if (m.t === 'full') leaveOnline('That room is already full.');
+    });
+    c.on('close', () => { if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.'); });
+  });
+  peer.on('error', e => {
+    clearTimeout(timeout);
+    leaveOnline(e.type === 'peer-unavailable' ? `Room <b>${code}</b> not found.` : `Online error (${e.type}). Try again.`);
+  });
+}
+
+function leaveOnline(msg) {
+  const oldConn = conn, oldPeer = peer;
+  role = 'local'; conn = null; peer = null;
+  try { oldConn && oldConn.close(); } catch (e) {}
+  try { oldPeer && oldPeer.destroy(); } catch (e) {}
+  cfg = loadCfg();
+  state = 'ready'; reset(); showIntro();
+  setStatus(msg || '');
+}
+
+$('hostBtn').addEventListener('click', hostGame);
+$('joinBtn').addEventListener('click', () => joinGame($('codeIn').value));
+$('leaveBtn').addEventListener('click', () => leaveOnline(''));
+
+// Host → guest: full game snapshot every tick, plus the effects that happened
+function sendState() {
+  if (role !== 'host' || !conn || !conn.open) { outFx = []; return; }
+  send({
+    t:'state', state, cfg, score, apples, pausedT, ack: hostLastSeq,
+    countLeft: countEnd - performance.now(),
+    snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
+      apples:s.apples, pending:s.pending, eatFx:s.eatFx })),
+    fx: outFx,
+  });
+  outFx = [];
+}
+
+// Everything from the guest is untrusted: accept only well-formed messages
+function onHostData(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'input') {
+    if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
+    hostLastSeq = Math.max(hostLastSeq, m.seq); steer(1, m.dir);
+  }
+  else if (m.t === 'space') spaceAction();
+  else if (m.t === 'start') { if (state === 'paused') resume(); else if (state === 'ready' || state === 'over') beginGame(); }
+}
+
+// Guest: show the turn right away, then tell the host
+function guestSteer(dir) {
+  if (!conn || !conn.open) return;
+  if ((state === 'playing' || state === 'countdown') && snakes[1].alive) queueDir(snakes[1], dir);
+  const seq = ++inputSeq;
+  unacked.push({ seq, dir });
+  if (unacked.length > 6) unacked.shift();
+  send({ t:'input', dir, seq });
+}
+
+// Everything from the host is untrusted too: rebuild the state from checked values only
+const STATES = ['ready', 'countdown', 'playing', 'paused', 'over'];
+const HEX = /^#[0-9a-f]{6}$/i;
+const num = (v, lo, hi, dflt = lo) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+const int = (v, lo, hi) => Math.round(num(v, lo, hi));
+const cellOf = p => ({ x: int(p && p.x, 0, COLS - 1), y: int(p && p.y, 0, ROWS - 1) });
+const arr = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
+const dirOr = (d, dflt) => has(DIRS, d) ? d : dflt;
+
+function cleanState(m) {
+  const c = validCfg(m.cfg);
+  const [cols, rows] = BOARDS[c.board], cells = cols * rows;
+  if (JSON.stringify(c) !== JSON.stringify(cfg)) { cfg = c; applyConfig(); }
+  const snakeList = arr(m.snakes, 2);
+  if (snakeList.length !== 2) throw new Error('bad snakes');
+  return {
+    state: STATES.includes(m.state) ? m.state : 'ready',
+    score: int(m.score, 0, 1e6),
+    pausedT: num(m.pausedT, 0, 1),
+    countLeft: num(m.countLeft, 0, 5000),
+    ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
+    apples: arr(m.apples, 10).map(a => {
+      const o = cellOf(a);
+      if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
+      return o;
+    }),
+    snakes: snakeList.map((s, id) => {
+      s = s && typeof s === 'object' ? s : {};
+      const body = arr(s.body, cells).map(cellOf);
+      if (!body.length) throw new Error('bad body');
+      return {
+        id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
+        alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
+        pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1),
+      };
+    }),
+    fx: arr(m.fx, 60).filter(f => Array.isArray(f) && has(FX_SAFE, f[0]) && Array.isArray(f[1])),
+  };
+}
+
+// Only these effects can be triggered by the host, with their arguments clamped
+const FX_SAFE = {
+  beep: (f, d, delay, type) => beep(num(f, 40, 4000, 440), num(d, .01, .5), num(delay, 0, .5),
+    ['square', 'sine', 'sawtooth', 'triangle'].includes(type) ? type : 'square'),
+  burst: (cell, color, n, speed) => burst(cellOf(cell), HEX.test(color) ? color : '#ffffff', int(n, 0, 30), num(speed, 0, 6)),
+  popup: (cell, text, color) => popup(cellOf(cell), String(text).slice(0, 12), HEX.test(color) ? color : '#ffffff'),
+  shake: () => doShake(),
+};
+
+function applyState(raw) {
+  let m;
+  try { m = cleanState(raw); } catch (e) { return; } // ignore malformed messages
+  const prev = state;
+  state = m.state; score = m.score; apples = m.apples;
+  snakes = m.snakes;
+  unacked = unacked.filter(u => u.seq > m.ack);
+  if (snakes[1].alive) for (const u of unacked) queueDir(snakes[1], u.dir);
+  if (state === 'countdown') countEnd = performance.now() + m.countLeft;
+  if (state === 'paused') pausedT = m.pausedT;
+  if (state === 'countdown' && prev !== 'countdown') { particles = []; popups = []; lastCount = 0; }
+  lastTick = performance.now();
+  for (const [name, args] of m.fx) FX_SAFE[name](...args);
+  updateHud();
+  if (state !== prev || forceOverlay) {
+    forceOverlay = false;
+    if (state === 'countdown' || state === 'playing') overlay.classList.add('hidden');
+    else if (state === 'paused') showOverlay('Paused', 'Press Space to resume', 'Resume', true);
+    else if (state === 'over') showGameOver();
+    else showIntro();
+  }
+}
+
+// ---------- Sound ----------
+let audio;
+function beep(freq, dur, delay = 0, type = 'square') {
+  if (recording) outFx.push(['beep', [freq, dur, delay, type]]);
+  if (muted) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    const t = audio.currentTime + delay, o = audio.createOscillator(), g = audio.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(.06, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+    o.connect(g).connect(audio.destination); o.start(t); o.stop(t + dur);
+  } catch (e) {}
+}
+
+// ---------- Effects ----------
+function burst(cell, color, n, speed) {
+  if (recording) outFx.push(['burst', [{ x:cell.x, y:cell.y }, color, n, speed]]);
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2), v = rand(.3, 1) * speed;
+    particles.push({ x:(cell.x + .5) * CELL, y:(cell.y + .5) * CELL, vx:Math.cos(a) * v, vy:Math.sin(a) * v,
+      life:1, decay:rand(.02, .045), r:CELL * rand(.05, .11), color });
+  }
+}
+function popup(cell, text, color) {
+  if (recording) outFx.push(['popup', [{ x:cell.x, y:cell.y }, text, color]]);
+  popups.push({ x:(cell.x + .5) * CELL, y:(cell.y + .2) * CELL, text, color, life:1 });
+}
+function doShake() {
+  if (recording) outFx.push(['shake', []]);
+  shake = 1;
+}
+
+// ---------- Rendering ----------
+function drawBoard() {
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    ctx.fillStyle = (x + y) % 2 ? DARK : LIGHT;
+    ctx.fillRect(x * CELL, y * CELL, CELL, CELL);
+  }
+}
+
+function drawApple(a, now) {
+  if (a.gold && a.ttl < 16 && Math.floor(now / 110) % 2) return; // blink before vanishing
+  const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
+  const r = CELL * .36 * (1 + Math.sin(now / (a.gold ? 120 : 250)) * (a.gold ? .07 : .03));
+  if (a.gold) {
+    const g = ctx.createRadialGradient(cx, cy, r * .5, cx, cy, r * 2);
+    g.addColorStop(0, 'rgba(255,230,120,.6)'); g.addColorStop(1, 'rgba(255,230,120,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r * 2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(0,0,0,.12)';
+  ctx.beginPath(); ctx.ellipse(cx, cy + r * .9, r * .8, r * .25, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = a.gold ? '#f5c518' : '#e7471d';
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ctx.beginPath(); ctx.arc(cx - r * .35, cy - r * .3, r * .22, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#6b3e1f'; ctx.lineWidth = CELL * .07; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx, cy - r * .8); ctx.lineTo(cx + r * .1, cy - r * 1.3); ctx.stroke();
+  ctx.fillStyle = '#4caf50';
+  ctx.beginPath(); ctx.ellipse(cx + r * .45, cy - r * 1.1, r * .38, r * .18, -.5, 0, Math.PI * 2); ctx.fill();
+  if (a.gold) { // timer ring
+    ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = CELL * .05;
+    ctx.beginPath(); ctx.arc(cx, cy, r * 1.35, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * a.ttl / a.max); ctx.stroke();
+  }
+}
+
+const px = p => ({ x: (p.x + .5) * CELL, y: (p.y + .5) * CELL });
+const nextDir = s => s.queue.length ? s.queue[0] : s.dir;
+
+function drawSnake(s, t) {
+  const b = s.body, n = b.length;
+  const dir = s.alive ? nextDir(s) : s.dir;
+  const next = step(b[0], dir);
+  const grow = s.pending > 0 || apples.some(a => eq(a, next));
+  // Don't slide the head into a wall or body it's about to crash into
+  const lethal = !inBounds(next)
+    || b.some((c, i) => eq(c, next) && (grow || i < n - 1))
+    || snakes.some(o => o !== s && o.alive && o.body.some(c => eq(c, next)));
+  const tt = s.alive && state === 'playing' || state === 'paused' ? (lethal || !s.alive ? 0 : t) : 0;
+
+  // Draw ahead of the logical position so turns show the instant a key is pressed
+  const pts = [toward(b[0], next, tt)];
+  const keep = grow || tt === 0 ? n : n - 1;
+  for (let i = 0; i < keep; i++) pts.push(b[i]);
+  if (keep < n) pts.push(toward(b[n - 1], b[n - 2] || b[0], tt));
+
+  // Split the path wherever it wraps across an edge
+  const runs = [[pts[0]]];
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1], c = pts[i];
+    if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) runs.push([]);
+    runs[runs.length - 1].push(c);
+  }
+
+  ctx.save();
+  if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(performance.now() / 120);
+  const color = s.alive ? COLORS[s.id].body : COLORS[s.id].dead;
+  ctx.strokeStyle = color; ctx.lineWidth = CELL * .78; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const run of runs) {
+    const P = run.map(px);
+    ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
+    for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
+    if (P.length === 1) ctx.lineTo(P[0].x + .01, P[0].y);
+    ctx.stroke();
+  }
+
+  const h = px(pts[0]), d = DIRS[dir];
+  if (s.eatFx > 0) { // head bulge after eating
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.arc(h.x, h.y, CELL * .39 * (1 + .28 * s.eatFx), 0, Math.PI * 2); ctx.fill();
+  }
+  const fx = h.x + d.x * CELL * .12, fy = h.y + d.y * CELL * .12;
+  const ox = -d.y * CELL * .2, oy = d.x * CELL * .2;
+  for (const sgn of [1, -1]) {
+    const ex = fx + ox * sgn, ey = fy + oy * sgn;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(ex, ey, CELL * .14, 0, Math.PI * 2); ctx.fill();
+    if (s.alive) {
+      ctx.fillStyle = '#1b1b1b';
+      ctx.beginPath(); ctx.arc(ex + d.x * CELL * .05, ey + d.y * CELL * .05, CELL * .075, 0, Math.PI * 2); ctx.fill();
+    } else {
+      ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .04; const k = CELL * .07;
+      ctx.beginPath(); ctx.moveTo(ex - k, ey - k); ctx.lineTo(ex + k, ey + k);
+      ctx.moveTo(ex + k, ey - k); ctx.lineTo(ex - k, ey + k); ctx.stroke();
+    }
+  }
+  if (state === 'ready' || state === 'countdown') {
+    ctx.fillStyle = '#fff'; ctx.font = `bold ${CELL * .4}px Roboto, Arial`; ctx.textAlign = 'center';
+    ctx.fillText(playerName(s.id), h.x, h.y - CELL * .65);
+  }
+  ctx.restore();
+}
+
+function drawEffects(k) {
+  for (const p of particles) {
+    p.x += p.vx * k; p.y += p.vy * k; p.vx *= .94; p.vy = p.vy * .94 + .08 * k; p.life -= p.decay * k;
+    ctx.globalAlpha = Math.max(0, p.life); ctx.fillStyle = p.color;
+    ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.textAlign = 'center'; ctx.font = `bold ${CELL * .5}px Roboto, Arial`;
+  for (const p of popups) {
+    p.y -= .7 * k; p.life -= .018 * k;
+    ctx.globalAlpha = Math.max(0, p.life);
+    ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.35)'; ctx.strokeText(p.text, p.x, p.y);
+    ctx.fillStyle = p.color; ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+  particles = particles.filter(p => p.life > 0);
+  popups = popups.filter(p => p.life > 0);
+}
+
+function drawCountdown(now) {
+  const left = Math.max(0, countEnd - now), n = Math.max(1, Math.ceil(left / 600));
+  if (n !== lastCount) { lastCount = n; beep(660, .1); }
+  const frac = (left % 600) / 600;
+  ctx.save();
+  ctx.fillStyle = 'rgba(0,0,0,.15)'; ctx.fillRect(0, 0, COLS * CELL, ROWS * CELL);
+  ctx.globalAlpha = Math.min(1, frac * 2 + .2);
+  ctx.fillStyle = '#fff'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.font = `bold ${CELL * (2.2 + (1 - frac) * .6)}px Roboto, Arial`;
+  ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,.25)';
+  ctx.strokeText(n, COLS * CELL / 2, ROWS * CELL / 2); ctx.fillText(n, COLS * CELL / 2, ROWS * CELL / 2);
+  ctx.restore();
+}
+
+// Simulation runs on a timer (not just animation frames) so the host keeps going smoothly
+function update() {
+  const now = performance.now();
+  if (state === 'countdown' && now >= countEnd) {
+    state = 'playing'; lastTick = now; beep(990, .15);
+    if (role === 'guest') return;
+    sendState();
+  }
+  if (role === 'guest' || state !== 'playing') return;
+  if (now - lastTick > TICK * 5) lastTick = now - TICK;
+  while (state === 'playing' && now - lastTick >= TICK) { lastTick += TICK; tick(); }
+}
+setInterval(update, 8);
+
+let lastFrame = performance.now();
+function frame(now) {
+  const k = Math.min(3, (now - lastFrame) / 16.67); lastFrame = now;
+  update();
+  const t = state === 'playing' ? Math.min(1, (now - lastTick) / TICK) : state === 'paused' ? pausedT : 0;
+
+  ctx.save();
+  if (shake > .02) { ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10); shake *= Math.pow(.88, k); }
+  drawBoard();
+  apples.forEach(a => drawApple(a, now));
+  snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t));
+  snakes.filter(s => s.alive).forEach(s => drawSnake(s, t));
+  snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * k); });
+  drawEffects(k);
+  ctx.restore();
+  if (state === 'countdown') drawCountdown(now);
+  requestAnimationFrame(frame);
+}
+
+reset();
+showIntro();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
