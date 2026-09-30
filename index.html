@@ -9,7 +9,7 @@
   integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"
   crossorigin="anonymous"></script>
 <style>
-  :root { --header:#4a752c; --border:#578a34; --p1:#4e7cf6; --p2:#a855f7; }
+  :root { --header:#4a752c; --border:#578a34; --p1:#4e7cf6; --p2:#a855f7; --p3:#f97316; --p4:#14b8a6; }
   * { box-sizing:border-box; }
   [hidden] { display:none !important; }
   body {
@@ -115,6 +115,8 @@
     <div class="spacer"></div>
     <div class="pl" id="pl1"><span class="dot" style="background:var(--p1)"></span><span id="pn1">P1</span> <span id="p1">0</span></div>
     <div class="pl" id="pl2"><span class="dot" style="background:var(--p2)"></span><span id="pn2">P2</span> <span id="p2">0</span></div>
+    <div class="pl" id="pl3" hidden><span class="dot" style="background:var(--p3)"></span><span id="pn3">P3</span> <span id="p3">0</span></div>
+    <div class="pl" id="pl4" hidden><span class="dot" style="background:var(--p4)"></span><span id="pn4">P4</span> <span id="p4">0</span></div>
     <span class="ping" id="ping" title="Connection delay to your friend" hidden></span>
     <button class="icon" id="muteBtn" title="Sound on/off (M)" aria-label="Sound on/off">🔊</button>
     <button class="icon" id="fsBtn" title="Fullscreen (F)" aria-label="Fullscreen">
@@ -209,7 +211,8 @@ const validSkin = (k, dflt) => ({
   c: k && isIdx(k.c, PALETTE.length) ? k.c : dflt.c,
   p: k && has(PATTERNS, k.p) ? k.p : dflt.p,
 });
-const DEFAULT_SKINS = [{ c:0, p:'classic' }, { c:1, p:'classic' }];
+const MAX_PLAYERS = 4;
+const DEFAULT_SKINS = [{ c:0, p:'classic' }, { c:1, p:'classic' }, { c:2, p:'classic' }, { c:4, p:'classic' }];
 // Mix two #rrggbb colors (t = how much of b)
 function mix(a, b, t) {
   const pa = [1, 3, 5].map(i => parseInt(a.slice(i, i + 2), 16)), pb = [1, 3, 5].map(i => parseInt(b.slice(i, i + 2), 16));
@@ -262,7 +265,7 @@ let muted = false;
 try { muted = localStorage.getItem('coopSnakeMuted') === '1'; } catch (e) {}
 const rockBorn = new Map();
 // Per-player looks that only exist on screen (mouth, blinking, emote bubbles)
-const looks = [0, 1].map(() => ({ mouth:0, blinkAt:0, emote:-1, emoteAt:0, lastEmote:-1e9, hx:0, hy:0 }));
+const looks = [0, 1, 2, 3].map(() => ({ mouth:0, blinkAt:0, emote:-1, emoteAt:0, lastEmote:-1e9, hx:0, hy:0 }));
 
 // Saved snake looks: one for each local player, plus "mine" for online games
 function loadSkins() {
@@ -272,20 +275,38 @@ function loadSkins() {
   return { local: [validSkin(local[0], DEFAULT_SKINS[0]), validSkin(local[1], DEFAULT_SKINS[1])], online: validSkin(saved.online, DEFAULT_SKINS[0]) };
 }
 const savedSkins = loadSkins();
-let skins = savedSkins.local.map(k => ({ ...k })); // the looks in the current game
+const copySkins = () => DEFAULT_SKINS.map(k => ({ ...k }));
+// The looks in the current game, one per player slot
+function startingSkins() {
+  const k = copySkins();
+  if (uiMode === 'local') { k[0] = { ...savedSkins.local[0] }; k[1] = { ...savedSkins.local[1] }; }
+  else if (role !== 'guest') k[0] = { ...savedSkins.online };
+  return k;
+}
+let skins = copySkins();
 const saveSkins = () => { try { localStorage.setItem('coopSnakeSkins', JSON.stringify(savedSkins)); } catch (e) {} };
 const skinHex = id => PALETTE[skins[id].c].hex;
 const skinDead = id => mix(skinHex(id), '#a3a8b0', .6);
-// Online, two players might pick the same color; the friend's snake then switches to the next free one
+// Online, players might pick the same color: earlier slots keep theirs, later ones move to the next free color
 function fixClash() {
-  if (skins[1].c === skins[0].c) skins[1] = { ...skins[1], c: (skins[0].c + 1) % PALETTE.length };
+  const used = new Set();
+  skins.forEach((k, i) => {
+    let c = k.c;
+    while (used.has(c)) c = (c + 1) % PALETTE.length;
+    used.add(c);
+    if (c !== k.c) skins[i] = { ...k, c };
+  });
 }
 
 // Online: 'local' = same keyboard, 'host' runs the game, 'guest' mirrors the host.
-let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '';
-let recording = false, outFx = [], inputSeq = 0, unacked = [], hostLastSeq = 0, forceOverlay = false;
-let inbox = [], applyAt = 0, lastN = -1, pingMs = null, hostPingSeen = 0;
-const PEER_PREFIX = 'coop-snake-v3-';
+// The host is player slot 0; up to three friends get slots 1–3.
+let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '', mySlot = 1;
+const conns = {};      // host: slot -> that friend's connection
+const lastSeq = {};    // host: slot -> newest key press received from that friend
+const pings = {};      // host: slot -> that friend's connection delay
+let recording = false, outFx = [], inputSeq = 0, unacked = [], forceOverlay = false;
+let inbox = [], applyAt = 0, lastN = -1, pingMs = null;
+const PEER_PREFIX = 'coop-snake-v4-';
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
@@ -369,6 +390,13 @@ function fit() {
 addEventListener('resize', fit);
 document.addEventListener('fullscreenchange', fit);
 
+// Which player slots get a snake: two on one keyboard, or online the host plus every connected friend
+function playerSlots() {
+  if (role !== 'host') return [0, 1];
+  return [0, ...Object.keys(conns).map(Number).filter(i => conns[i].open).sort()];
+}
+const snakeOf = id => snakes.find(s => s.id === id);
+
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
   return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0 };
@@ -376,11 +404,14 @@ function makeSnake(id, y) {
 
 function reset() {
   applyConfig();
-  const y1 = Math.floor(ROWS * .3), y2 = ROWS - 1 - y1;
-  snakes = [makeSnake(0, y1), makeSnake(1, y2)];
+  // Everyone starts on the left, spread out over the rows
+  const ids = playerSlots();
+  const rows = ids.length === 2 ? [Math.floor(ROWS * .3), ROWS - 1 - Math.floor(ROWS * .3)]
+                                : ids.map((_, i) => Math.floor((i + .5) * ROWS / ids.length));
+  snakes = ids.map((id, i) => makeSnake(id, rows[i]));
   rocks = []; rockBorn.clear(); portals = [];
-  apples = [{x:COLS - 5, y:y1}, {x:COLS - 5, y:y2}].slice(0, cfg.apples);
-  if (cfg.game === 'portal') placePortals(y1, y2);
+  apples = rows.slice(0, 2).map(y => ({ x: COLS - 5, y })).slice(0, cfg.apples);
+  if (cfg.game === 'portal') placePortals(rows);
   while (normalApples() < cfg.apples) spawnApple();
   if (cfg.game === 'poison') movePoison();
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99];
@@ -398,10 +429,10 @@ function occupied() {
 const normalApples = () => apples.filter(a => !a.gold && !a.poison).length;
 
 // Portal mode: two linked pairs, kept away from the starting rows, the edges and each other
-function placePortals(y1, y2) {
+function placePortals(rows) {
   for (let tries = 0; tries < 2000 && portals.length < 4; tries++) {
     const p = { x: 1 + (Math.random() * (COLS - 2) | 0), y: 1 + (Math.random() * (ROWS - 2) | 0) };
-    if (p.y === y1 || p.y === y2 || occupied().some(c => eq(c, p))) continue;
+    if (rows.includes(p.y) || occupied().some(c => eq(c, p))) continue;
     if (portals.some(q => Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < 4)) continue;
     portals.push(p);
   }
@@ -551,20 +582,21 @@ function tick() {
 }
 
 function eatApple(s, a) {
-  const mate = snakes[1 - s.id], pts = a.gold ? GOLD_POINTS : 1;
+  const pts = a.gold ? GOLD_POINTS : 1;
   s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
   burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
   popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
   if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
   else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
-  // Teamwork bonus: both of you eat within a moment of each other
-  if (tickNo - lastEat[mate.id] <= Math.round(TEAM_MS / TICK)) {
-    score += TEAM_BONUS; stats.teamwork++; lastEat = [-99, -99];
+  // Teamwork bonus: you and a teammate eat within a moment of each other
+  if (snakes.some(o => o !== s && tickNo - (lastEat[o.id] ?? -99) <= Math.round(TEAM_MS / TICK))) {
+    score += TEAM_BONUS; stats.teamwork++; lastEat = [];
     popup({ x:a.x, y:a.y - .7 }, 'Teamwork +' + TEAM_BONUS, '#ffe680');
     beep(1320, .08, .12, 'triangle'); beep(1760, .14, .2, 'triangle');
   } else lastEat[s.id] = tickNo;
-  // Co-op rescue: eating brings a downed teammate straight back
-  if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) {
+  // Co-op rescue: eating brings back the downed teammate with the longest wait left
+  const mate = snakes.filter(o => !o.alive && o.respawn > 0).sort((p, q) => q.respawn - p.respawn)[0];
+  if (mate && respawnSnake(mate)) {
     stats.rescues++;
     popup(mate.body[0], 'Rescued!', '#fff');
   }
@@ -632,14 +664,15 @@ function pastBodies(s, k) {
 // The host does this when the friend's key press arrives late, and the friend's game uses the same
 // rules to show it straight away, so their snake turns exactly where they pressed.
 // Returns null if that wouldn't be safe (then the turn just happens on the next move instead).
-function replayTurn(s, k, dir, other) {
+function replayTurn(s, k, dir) {
   if (!s.alive || s.queue.length || k < 1 || k > s.log.length) return null;
   if (dir === s.dir || dir === OPP[s.dir]) return null;
   const recent = s.log.slice(0, k);
   if (!recent.every(r => r.ok && !r.turn && !r.ate)) return null;
   const peaceful = cfg.game === 'peaceful';
-  const others = other.alive && !peaceful ? pastBodies(other, k) : [];
-  if (!others) return null;
+  // Where every teammate was during those moves
+  const mates = peaceful ? [] : snakes.filter(o => o !== s && o.alive).map(o => pastBodies(o, k));
+  if (mates.includes(null)) return null;
   let body = s.body;
   for (const r of recent) { body = body.slice(1); if (r.tail) body.push(r.tail); }
   const log = [];
@@ -651,8 +684,10 @@ function replayTurn(s, k, dir, other) {
     const tail = recent[j].tail ? body.pop() : null;
     if (!peaceful) {
       if (body.some((c, i) => i > 0 && eq(c, head))) return null;
-      const ob = others[j];
-      if (ob && (ob.some(c => eq(c, head)) || body.some(c => eq(c, ob[0])))) return null;
+      for (const m of mates) {
+        const ob = m[j];
+        if (ob && (ob.some(c => eq(c, head)) || body.some(c => eq(c, ob[0])))) return null;
+      }
     }
     const apple = apples.find(a => eq(a, head));
     if (apple) { if (j > 0 || apple.poison) return null; eat = true; }
@@ -662,10 +697,10 @@ function replayTurn(s, k, dir, other) {
 }
 
 // Host: the friend's turn was meant for a move that already happened
-function lateTurn(dir, at) {
-  const s = snakes[1], k = tickNo - at + 1;
-  if (k > maxRewind()) return false;
-  const r = replayTurn(s, k, dir, snakes[0]);
+function lateTurn(slot, dir, at) {
+  const s = snakeOf(slot), k = tickNo - at + 1;
+  if (!s || k > maxRewind()) return false;
+  const r = replayTurn(s, k, dir);
   if (!r) return false;
   s.body = r.body; s.dir = dir; s.log = r.log;
   const i = r.eat ? apples.findIndex(a => eq(a, s.body[0])) : -1;
@@ -683,11 +718,17 @@ function lateTurn(dir, at) {
 
 function updateHud() {
   $('score').textContent = score;
-  snakes.forEach((s, i) => {
+  for (let id = 0; id < MAX_PLAYERS; id++) {
+    const s = snakeOf(id);
+    $('pl' + (id + 1)).hidden = !s;
+    if (!s) continue;
     const down = !s.alive && state !== 'over';
-    $('p' + (i + 1)).textContent = down ? `${s.apples} · back in ${Math.ceil(s.respawn * TICK / 1000)}s` : s.apples;
-    $('pl' + (i + 1)).classList.toggle('down', down);
-  });
+    $('p' + (id + 1)).textContent = s.gone ? `${s.apples} · left` : down ? `${s.apples} · back in ${Math.ceil(s.respawn * TICK / 1000)}s` : s.apples;
+    $('pl' + (id + 1)).classList.toggle('down', down);
+  }
+  // Someone who joins in the middle of a round watches until the next one
+  const mine = snakeOf(mySlot);
+  if (role === 'guest') $('hint').textContent = (!mine || mine.gone) && state !== 'ready' ? "👀 Watching — you'll join at the next round" : hintText();
   if (score > best) {
     best = score; $('best').textContent = best;
     try { localStorage.setItem(bestKey(), best); } catch (e) {}
@@ -726,7 +767,7 @@ function showGameOver() {
   const secs = Math.round(tickNo * TICK / 1000);
   const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
   showOverlay(isBest ? 'New best! 🏆' : cfg.game === 'peaceful' ? 'Well played!' : 'Game over',
-    `You scored <b>${score}</b> together!<br>${playerName(0)}: ${snakes[0].apples} · ${playerName(1)}: ${snakes[1].apples}
+    `You scored <b>${score}</b> together!<br>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
      <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
     'Play again');
@@ -761,13 +802,14 @@ function spaceAction() {
 function steer(player, dir) {
   if (state === 'ready' || state === 'over') { if (!canRestart()) return; beginGame(); }
   if (state !== 'playing' && state !== 'countdown') return;
-  const s = snakes[player];
-  if (s.alive) queueAt(s, dir, turnMove(s, tickNo), tickNo);
+  const s = snakeOf(player);
+  if (s && s.alive) queueAt(s, dir, turnMove(s, tickNo), tickNo);
 }
 
 // ---------- Input (keyboard, touch, controllers, buttons) ----------
-const me = () => role === 'guest' ? 1 : 0;
-const connected = () => !!(conn && conn.open);
+const me = () => role === 'guest' ? mySlot : 0;
+const friendCount = () => Object.values(conns).filter(c => c.open).length;
+const connected = () => role === 'host' ? friendCount() > 0 : !!(conn && conn.open);
 
 function playerSteer(p, dir) {
   if (role === 'guest') guestSteer(dir);
@@ -802,7 +844,7 @@ function showEmote(p, i) {
 }
 
 function pressEmote(p, i) {
-  if (role === 'guest') { if (connected() && showEmote(1, i)) send({ t:'emote', i }); }
+  if (role === 'guest') { if (connected() && showEmote(mySlot, i)) send({ t:'emote', i }); }
   else if (role === 'host') { if (connected() && showEmote(0, i)) send({ t:'emote', p:0, i }); }
   else if (uiMode === 'local') showEmote(p, i);
 }
@@ -911,10 +953,15 @@ function pollPads() {
 // ---------- Online ----------
 function playerName(i) {
   if (role === 'local') return 'P' + (i + 1);
-  return i === me() ? 'You' : 'Friend';
+  return i === me() ? 'You' : 'P' + (i + 1);
 }
 function setStatus(html) { $('onStatus').innerHTML = html; }
-function send(m) { if (connected()) { try { conn.send(m); } catch (e) {} } }
+// Guest: message the host. Host: message every friend (or `except` one of them).
+function send(m, except) {
+  if (role === 'host') { for (const [slot, c] of Object.entries(conns)) if (+slot !== except) sendTo(c, m); }
+  else if (conn && conn.open) sendTo(conn, m);
+}
+function sendTo(c, m) { if (c && c.open) { try { c.send(m); } catch (e) {} } }
 const youAre = () => `<span class="dot" style="background:var(--p${me() + 1})"></span> You are <b>${PALETTE[skins[me()].c].name}</b>`;
 
 // Show the current looks in the top bar and menu
@@ -928,7 +975,7 @@ function renderSkinPanel() {
   if (panel.hidden) return;
   const slots = uiMode === 'local' ? [[0, 'P1'], [1, 'P2']] : [[me(), 'You']];
   panel.innerHTML = slots.map(([slot, label]) => {
-    const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1;
+    const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1; // local is always P1/P2
     return `<div class="skin-row"><b>${label}</b>
       <div class="swatches">${PALETTE.map((c, i) => `<button class="swatch${k.c === i ? ' on' : ''}" data-slot="${slot}" data-c="${i}"
         style="background:${c.hex}" title="${c.name}" aria-label="${c.name}"${taken === i ? ' disabled' : ''}></button>`).join('')}</div>
@@ -982,7 +1029,7 @@ function renderMenu() {
   $('help').innerHTML = !online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
     : role === 'guest' ? `The host picks the settings · ${common}`
     : `You pick the settings · ${common}`;
-  $('pn1').textContent = playerName(0); $('pn2').textContent = playerName(1);
+  for (let i = 0; i < MAX_PLAYERS; i++) $('pn' + (i + 1)).textContent = playerName(i);
   $('emoteBar').hidden = !(role !== 'local' && on);
   renderSkinPanel();
   renderPing();
@@ -990,6 +1037,8 @@ function renderMenu() {
 }
 
 function renderPing() {
+  // The host shows the slowest friend's connection
+  if (role === 'host') { const all = Object.values(pings); pingMs = all.length ? Math.max(...all) : null; }
   const show = role !== 'local' && connected() && pingMs !== null;
   $('ping').hidden = !show;
   if (show) $('ping').textContent = `📶 ${pingMs} ms`;
@@ -1002,7 +1051,7 @@ $('modeSeg').addEventListener('click', e => {
   if (b.dataset.mode === uiMode) return;
   if (role !== 'local') leaveOnline('');
   uiMode = b.dataset.mode;
-  skins = uiMode === 'local' ? savedSkins.local.map(k => ({ ...k })) : [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }];
+  skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
 });
@@ -1016,9 +1065,13 @@ function makeCode() {
 // Invite links only make sense when the game is on a website (like GitHub Pages)
 const canInvite = /^https?:$/.test(location.protocol);
 function waitingStatus(prefix) {
+  const n = friendCount();
   setStatus(`${prefix || ''}Room code: <span class="code">${roomCode}</span>` +
     (canInvite ? `<button class="btn2 invite" id="copyInvite">Copy invite link</button>` : '') +
-    `<br>Send the ${canInvite ? 'link or code' : 'code'} to your friend. Waiting for them to join…`);
+    (n ? `<br><b>${n + 1} of ${MAX_PLAYERS} players</b> in the room.` +
+         (n < MAX_PLAYERS - 1 ? ` More friends can still join with the ${canInvite ? 'link or code' : 'code'}.` : '') +
+         ` Press Play when everyone's in!`
+       : `<br>Send the ${canInvite ? 'link or code' : 'code'} to up to ${MAX_PLAYERS - 1} friends. Waiting for them to join…`));
 }
 $('onStatus').addEventListener('click', e => {
   const b = e.target.closest('#copyInvite');
@@ -1034,25 +1087,40 @@ function hostGame() {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'host'; roomCode = makeCode(); conn = null; pingMs = null;
-  skins = [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }]; fixClash();
+  for (const k in conns) delete conns[k];
+  for (const k in pings) delete pings[k];
+  skins = startingSkins(); fixClash();
   setStatus('Creating room…'); applySkins();
   peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
   peer.on('open', () => waitingStatus());
   peer.on('connection', c => {
-    if (connected()) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
-    conn = c; hostLastSeq = 0; pingMs = null;
+    // Each friend gets the lowest free player slot (1–3)
+    const slot = [1, 2, 3].find(i => !conns[i]);
+    if (!slot) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
+    conns[slot] = c;
     c.on('open', () => {
-      state = 'ready'; reset(); showIntro();
-      setStatus(`Friend connected to room <b>${roomCode}</b>! Press Play when you're ready.`);
+      if (conns[slot] !== c) return;
+      lastSeq[slot] = 0;
+      skins[slot] = { ...DEFAULT_SKINS[slot] }; fixClash(); applySkins();
+      // In the menu, the new snake appears straight away; mid-game, they join at the next round
+      if (state === 'ready' || state === 'over') { state = 'ready'; reset(); showIntro(); }
+      waitingStatus();
       renderMenu(); sendState();
     });
-    c.on('data', onHostData);
+    c.on('data', m => { if (conns[slot] === c) onHostData(slot, m); });
     c.on('close', () => {
-      if (conn !== c) return;
-      conn = null; pingMs = null;
+      if (conns[slot] !== c) return;
+      delete conns[slot]; delete pings[slot];
       if (role !== 'host') return;
-      state = 'ready'; reset(); showIntro();
-      waitingStatus('Your friend left. ');
+      if (!friendCount()) { state = 'ready'; reset(); showIntro(); waitingStatus('Everyone left. '); return; }
+      const s = snakeOf(slot);
+      if (s && (state === 'playing' || state === 'paused' || state === 'countdown')) {
+        // Their snake stays as a ghost for this round
+        Object.assign(s, { alive:false, respawn:0, gone:true, queue:[] });
+        if (!snakes.some(o => o.alive)) gameOver();
+      } else { state = 'ready'; reset(); showIntro(); }
+      waitingStatus(`P${slot + 1} left. `);
+      updateHud(); sendState();
     });
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
@@ -1070,8 +1138,8 @@ function joinGame(code) {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
-  inbox = []; lastN = -1; pingMs = null;
-  skins = [{ ...DEFAULT_SKINS[0] }, { ...savedSkins.online }];
+  inbox = []; lastN = -1; pingMs = null; mySlot = 1;
+  skins = copySkins();
   setStatus('Connecting…'); applySkins();
   const myPeer = peer = new Peer({ debug:0 });
   const timeout = setTimeout(() => {
@@ -1097,7 +1165,7 @@ function joinGame(code) {
         if (inbox.length > 30) inbox.splice(0, inbox.length - 30);
         pumpInbox();
       } else if (m.t === 'emote') {
-        if (m.p === 0 && isIdx(m.i, EMOTES.length)) showEmote(0, m.i);
+        if (isIdx(m.p, MAX_PLAYERS) && m.p !== mySlot && isIdx(m.i, EMOTES.length)) showEmote(m.p, m.i);
       } else if (m.t === 'pong') {
         const rtt = performance.now() - m.ts;
         if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60000) { pingMs = Math.round(rtt); renderPing(); }
@@ -1117,8 +1185,10 @@ function leaveOnline(msg) {
   role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1;
   try { oldConn && oldConn.close(); } catch (e) {}
   try { oldPeer && oldPeer.destroy(); } catch (e) {}
+  for (const k in conns) { try { conns[k].close(); } catch (e) {} delete conns[k]; }
+  for (const k in pings) delete pings[k];
   cfg = loadCfg();
-  skins = uiMode === 'local' ? savedSkins.local.map(k => ({ ...k })) : [{ ...savedSkins.online }, { ...DEFAULT_SKINS[1] }];
+  skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
   setStatus(msg || '');
@@ -1134,29 +1204,33 @@ setInterval(() => { if (role === 'guest' && connected()) send({ t:'ping', ts: pe
 // Host → guest: full game snapshot every tick, plus the effects that happened
 function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
-  send({
-    t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT, ack: hostLastSeq,
+  const m = {
+    t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
     countLeft: countEnd - performance.now(),
-    snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
-      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves })),
+    snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
+      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone })),
     fx: outFx,
-  });
+  };
+  // Each friend also hears which player they are and which of their key presses have arrived
+  for (const [slot, c] of Object.entries(conns)) sendTo(c, { ...m, you: +slot, ack: lastSeq[slot] || 0 });
   outFx = [];
 }
 
 // Everything from the guest is untrusted: accept only well-formed messages
-function onHostData(m) {
+const pingSeen = {};
+function onHostData(slot, m) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
     case 'input': {
       if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
-      hostLastSeq = Math.max(hostLastSeq, m.seq);
+      lastSeq[slot] = Math.max(lastSeq[slot] || 0, m.seq);
       // `at` = the move the friend meant to turn on, based on what their screen showed
       const at = Number.isSafeInteger(m.at) ? m.at : tickNo + 1;
-      if (state === 'playing' && at <= tickNo && lateTurn(m.dir, at)) return;
-      if (state === 'ready' || state === 'over') steer(1, m.dir);
-      else if ((state === 'playing' || state === 'countdown') && snakes[1].alive)
-        queueAt(snakes[1], m.dir, Math.min(at, tickNo + 3), tickNo);
+      if (state === 'playing' && at <= tickNo && lateTurn(slot, m.dir, at)) return;
+      const s = snakeOf(slot);
+      if (state === 'ready' || state === 'over') steer(slot, m.dir);
+      else if ((state === 'playing' || state === 'countdown') && s && s.alive)
+        queueAt(s, m.dir, Math.min(at, tickNo + 3), tickNo);
       break;
     }
     case 'space': spaceAction(); break;
@@ -1166,15 +1240,18 @@ function onHostData(m) {
       break;
     case 'quit': endGame(); break;
     case 'skin':
-      skins[1] = validSkin(m, skins[1]); fixClash(); applySkins(); sendState();
+      skins[slot] = validSkin(m, skins[slot]); fixClash(); applySkins(); sendState();
       break;
-    case 'emote': if (isIdx(m.i, EMOTES.length)) showEmote(1, m.i); break;
+    case 'emote':
+      // show it here and pass it on to the other friends
+      if (isIdx(m.i, EMOTES.length) && showEmote(slot, m.i)) send({ t:'emote', p:slot, i:m.i }, slot);
+      break;
     case 'ping': {
       const now = performance.now();
-      if (!Number.isFinite(m.ts) || now - hostPingSeen < 300) return;
-      hostPingSeen = now;
-      if (Number.isFinite(m.rtt) && m.rtt >= 0 && m.rtt < 60000) { pingMs = Math.round(m.rtt); renderPing(); }
-      send({ t:'pong', ts: m.ts });
+      if (!Number.isFinite(m.ts) || now - (pingSeen[slot] || 0) < 300) return;
+      pingSeen[slot] = now;
+      if (Number.isFinite(m.rtt) && m.rtt >= 0 && m.rtt < 60000) { pings[slot] = Math.round(m.rtt); renderPing(); }
+      sendTo(conns[slot], { t:'pong', ts: m.ts });
       break;
     }
   }
@@ -1183,10 +1260,10 @@ function onHostData(m) {
 // Guest: show the turn right away, then tell the host which move it was meant for
 function guestSteer(dir) {
   if (!connected()) return;
-  const s = snakes[1], live = state === 'playing' || state === 'countdown';
+  const s = snakeOf(mySlot), live = state === 'playing' || state === 'countdown';
   let at = lastN + 1;
   if (live) {
-    if (!s.alive) return;
+    if (!s || !s.alive) return; // (no snake = watching until the next round)
     at = turnMove(s, lastN);
     if (!queueAt(s, dir, at, lastN)) return; // same or opposite way: nothing would change
   }
@@ -1206,8 +1283,11 @@ function cleanState(m) {
     const c = validCfg(m.cfg);
     const [cols, rows] = BOARDS[c.board], cells = cols * rows;
     const cellOf = p => ({ x: int(p && p.x, 0, cols - 1), y: int(p && p.y, 0, rows - 1) });
-    const list = arr(m.snakes, 2);
-    if (list.length !== 2) return null;
+    const list = arr(m.snakes, MAX_PLAYERS);
+    if (!list.length) return null;
+    // every snake needs its own player slot 0–3
+    const ids = list.map(s => s && s.id);
+    if (!ids.every(i => isIdx(i, MAX_PLAYERS)) || new Set(ids).size !== ids.length) return null;
     const st = m.stats && typeof m.stats === 'object' ? m.stats : {};
     return {
       cfg: c,
@@ -1217,6 +1297,7 @@ function cleanState(m) {
       pausedT: num(m.pausedT, 0, 1),
       countLeft: num(m.countLeft, 0, 5000),
       ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
+      you: isIdx(m.you, MAX_PLAYERS) && m.you > 0 ? m.you : 1,
       apples: arr(m.apples, 16).map(a => {
         const o = cellOf(a);
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
@@ -1226,14 +1307,13 @@ function cleanState(m) {
       rocks: arr(m.rocks, cells).map(cellOf),
       portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
       tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
-      skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, 2)[i], d)),
+      skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, MAX_PLAYERS)[i], d)),
       stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells) },
-      snakes: list.map((s, id) => {
-        s = s && typeof s === 'object' ? s : {};
+      snakes: list.map(s => {
         const body = arr(s.body, cells).map(cellOf);
         if (!body.length) throw new Error('bad body');
         return {
-          id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
+          id: s.id, body, gone: s.gone === true, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
           pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1), moves: int(s.moves, 0, 1e9),
           log: arr(s.log, 8).map(r => r && typeof r === 'object'
@@ -1281,11 +1361,12 @@ function applyState(m) {
   portals = m.portals; TICK = m.tk;
   if (JSON.stringify(m.skins) !== JSON.stringify(skins)) { skins = m.skins; applySkins(); }
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
+  if (m.you !== mySlot) { mySlot = m.you; renderMenu(); }
   // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
   unacked = unacked.filter(u => u.seq > m.ack);
-  const mine = snakes[1];
-  if (mine.alive && (state === 'playing' || state === 'countdown')) for (const u of unacked) {
-    const r = state === 'playing' && u.at <= m.n ? replayTurn(mine, m.n - u.at + 1, u.dir, snakes[0]) : null;
+  const mine = snakeOf(mySlot);
+  if (mine && mine.alive && (state === 'playing' || state === 'countdown')) for (const u of unacked) {
+    const r = state === 'playing' && u.at <= m.n ? replayTurn(mine, m.n - u.at + 1, u.dir) : null;
     if (r) { mine.body = r.body; mine.dir = u.dir; mine.log = r.log; }
     else queueAt(mine, u.dir, u.at, m.n);
   }
@@ -1667,6 +1748,7 @@ function frame(now) {
 }
 
 $('muteBtn').textContent = muted ? '🔇' : '🔊';
+skins = startingSkins();
 reset();
 showIntro();
 applySkins();
