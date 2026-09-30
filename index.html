@@ -636,6 +636,12 @@ function togglePause() {
   } else if (state === 'paused') resume();
 }
 
+// A local game pauses itself when you switch away (online games keep going, since your friend is still playing)
+const awayFromGame = () => document.hidden;
+const pauseIfAway = () => { if (role === 'local' && state === 'playing') togglePause(); };
+document.addEventListener('visibilitychange', () => { if (document.hidden) pauseIfAway(); });
+addEventListener('blur', pauseIfAway);
+
 // Stops a new game starting by accident while you're still mashing keys after a crash
 const canRestart = () => state !== 'over' || performance.now() - overAt > 700;
 
@@ -821,7 +827,7 @@ function renderMenu() {
   const common = 'Space pause · M mute · F fullscreen · 🎮 controllers work too';
   $('help').innerHTML = !online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
     : role === 'guest' ? `The host picks the settings · ${common}`
-    : `${common}<br>Keep this tab in front while hosting`;
+    : `You pick the settings · ${common}`;
   $('pn1').textContent = playerName(0); $('pn2').textContent = playerName(1);
   $('emoteBar').hidden = !(role !== 'local' && on);
   renderPing();
@@ -894,6 +900,7 @@ function hostGame() {
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
   peer.on('error', e => {
     if (e.type === 'unavailable-id') hostGame();
+    else if (connected()) { try { peer.reconnect(); } catch (err) {} } // a matchmaking hiccup; the game itself is fine
     else if (e.type !== 'peer-unavailable') leaveOnline(`Online error (${e.type}). Try again.`);
   });
 }
@@ -939,6 +946,7 @@ function joinGame(code) {
     c.on('close', () => { if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.'); });
   });
   peer.on('error', e => {
+    if (peer !== myPeer || connected()) return; // after connecting, only the game connection matters
     clearTimeout(timeout);
     leaveOnline(e.type === 'peer-unavailable' ? `Room <b>${code}</b> not found.` : `Online error (${e.type}). Try again.`);
   });
@@ -1128,11 +1136,18 @@ function applyState(m) {
 
 // ---------- Sound ----------
 let audio;
+// Browsers keep sound locked until you click or press a key on the page. If the first sound came
+// from the network (the host starting the game), it stayed locked, so unlock it on the next key/click.
+const unlockAudio = () => { if (audio && audio.state === 'suspended') audio.resume().catch(() => {}); };
+addEventListener('keydown', unlockAudio);
+addEventListener('pointerdown', unlockAudio);
+
 function beep(freq, dur, delay = 0, type = 'square') {
   if (recording) outFx.push(['beep', [freq, dur, delay, type]]);
   if (muted) return;
   try {
     audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (audio.state === 'suspended') audio.resume().catch(() => {});
     const t = audio.currentTime + delay, o = audio.createOscillator(), g = audio.createGain();
     o.type = type; o.frequency.value = freq;
     g.gain.setValueAtTime(.06, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
@@ -1379,6 +1394,7 @@ function update() {
   if (state === 'countdown' && now >= countEnd) {
     state = 'playing'; setClock(now); beep(990, .15);
     if (role === 'guest') return;
+    if (role === 'local' && awayFromGame()) return togglePause();
     sendState();
   }
   if (role === 'guest' || state !== 'playing') return;
