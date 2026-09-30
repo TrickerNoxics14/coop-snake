@@ -19,29 +19,37 @@
   }
   .wrap { width:min(94vw, 680px); padding:12px 0; }
   .hud {
-    background:var(--header); display:flex; align-items:center; gap:16px; flex-wrap:wrap;
-    padding:10px 18px; border-radius:10px 10px 0 0; font-size:22px; font-weight:700;
+    background:var(--header); display:flex; align-items:center; gap:14px; flex-wrap:wrap;
+    padding:8px 12px 8px 18px; border-radius:10px 10px 0 0; font-size:22px; font-weight:700;
   }
   .hud .item { display:flex; align-items:center; gap:6px; }
   .hud .spacer { flex:1; }
+  .hud .icon {
+    background:none; border:0; color:#fff; font-size:17px; line-height:1; cursor:pointer;
+    padding:6px; border-radius:6px; opacity:.85; display:flex; align-items:center;
+  }
+  .hud .icon:hover { background:rgba(255,255,255,.15); opacity:1; }
+  .ping { font-size:12px; font-weight:600; opacity:.85; }
   .pl { font-size:14px; font-weight:600; display:flex; align-items:center; gap:6px; opacity:.95; }
   .pl.down { opacity:.6; }
   .dot { width:12px; height:12px; border-radius:50%; display:inline-block; flex:none; }
   .stage { position:relative; background:var(--border); padding:14px; border-radius:0 0 10px 10px; touch-action:none; }
   canvas { display:block; width:100%; height:auto; }
   .overlay {
-    position:absolute; inset:14px; display:flex; flex-direction:column; align-items:center;
-    justify-content:center; gap:12px; background:rgba(20,40,10,.66); text-align:center;
-    padding:16px; overflow:auto;
+    position:absolute; inset:14px; display:flex; background:rgba(20,40,10,.66);
+    text-align:center; padding:12px; overflow:auto;
   }
   .overlay.hidden { display:none; }
+  /* margin:auto centers the menu, but still lets it scroll from the top when it's taller than the board */
+  .ov-inner { margin:auto; display:flex; flex-direction:column; align-items:center; gap:10px; max-width:100%; }
   .overlay h1 { margin:0; font-size:34px; }
   .overlay p { margin:0; font-size:15px; line-height:1.5; }
   .keys { display:flex; gap:12px; flex-wrap:wrap; justify-content:center; }
   .keys div { background:rgba(0,0,0,.3); padding:8px 14px; border-radius:8px; font-size:14px; display:flex; align-items:center; gap:6px; }
-  .settings { display:grid; grid-template-columns:auto auto; gap:8px 12px; align-items:center; font-size:14px; }
+  .settings { display:grid; grid-template-columns:auto auto; gap:6px 12px; align-items:center; font-size:14px; }
   .settings > span { text-align:right; opacity:.85; }
-  .settings.locked { opacity:.55; pointer-events:none; }
+  .settings.locked .seg { opacity:.55; pointer-events:none; }
+  .mode-desc { grid-column:1 / -1; font-size:12px; opacity:.85; max-width:380px; justify-self:center; line-height:1.4; }
   .seg { display:inline-flex; background:rgba(0,0,0,.3); border-radius:8px; padding:3px; }
   .seg button {
     background:none; border:0; color:#fff; font:inherit; font-size:13px; padding:5px 11px;
@@ -50,80 +58,118 @@
   .seg button.on { background:#fff; color:#2d4d1a; font-weight:700; opacity:1; }
   .modes button { font-size:14px; padding:6px 16px; }
   .paused .menu-only { display:none !important; }
+  .overlay:not(.paused) .paused-only { display:none !important; }
   .online { display:flex; flex-direction:column; align-items:center; gap:10px; }
   .online .row { display:flex; align-items:center; gap:10px; flex-wrap:wrap; justify-content:center; }
+  .btns { display:flex; gap:10px; flex-wrap:wrap; justify-content:center; }
   .btn { background:#1a73e8; border:0; color:#fff; font-size:17px; font-weight:700; padding:10px 30px; border-radius:6px; cursor:pointer; }
   .btn:hover { background:#2b82f5; }
+  .btn.secondary { background:rgba(0,0,0,.4); }
+  .btn.secondary:hover { background:rgba(0,0,0,.55); }
   .btn2 { background:#fff; color:#2d4d1a; border:0; font-size:14px; font-weight:700; padding:8px 16px; border-radius:6px; cursor:pointer; }
   .btn2:hover { background:#e8f3dc; }
+  .invite { font-size:12px; padding:5px 10px; margin-left:6px; vertical-align:middle; }
   .link { background:none; border:0; color:#fff; text-decoration:underline; opacity:.8; cursor:pointer; font-size:13px; }
   #codeIn {
     width:130px; font-size:18px; font-weight:700; letter-spacing:4px; text-transform:uppercase; text-align:center;
     padding:6px; border-radius:6px; border:0; background:rgba(0,0,0,.35); color:#fff; outline:none;
   }
   #codeIn:focus { box-shadow:0 0 0 2px #fff; }
-  .status { font-size:14px; line-height:1.5; min-height:1em; }
-  .code { font-size:26px; letter-spacing:6px; background:rgba(0,0,0,.35); padding:2px 12px; border-radius:6px; user-select:all; -webkit-user-select:all; }
+  .status { font-size:14px; line-height:1.6; min-height:1em; }
+  .code { font-size:24px; letter-spacing:5px; background:rgba(0,0,0,.35); padding:2px 12px; border-radius:6px; user-select:all; -webkit-user-select:all; }
+  .stats { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:10px; }
+  .stats span { background:rgba(0,0,0,.3); padding:4px 10px; border-radius:999px; font-size:13px; }
   .small { font-size:12px !important; opacity:.75; }
+  .emotes { display:flex; justify-content:center; gap:10px; margin-top:8px; }
+  .emotes button {
+    font-size:22px; line-height:1; background:rgba(255,255,255,.08); border:0; border-radius:10px;
+    padding:7px 12px; cursor:pointer;
+  }
+  .emotes button:hover { background:rgba(255,255,255,.18); }
   .hint { font-size:12px; opacity:.7; text-align:center; margin-top:8px; }
   @media (max-width:560px) {
-    .overlay { gap:8px; padding:10px; justify-content:flex-start; }
+    .overlay { padding:10px; }
+    .ov-inner { gap:8px; }
     .overlay h1 { font-size:24px; }
     .overlay p { font-size:13px; }
-    .hud { font-size:18px; padding:8px 12px; gap:10px; }
+    .hud { font-size:18px; padding:6px 8px 6px 12px; gap:8px; }
     .seg button { padding:4px 7px; font-size:12px; }
   }
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="hud">
-    <div class="item">🍎 <span id="score">0</span></div>
-    <div class="item">🏆 <span id="best">0</span></div>
+<div class="wrap" id="wrap">
+  <div class="hud" id="hud">
+    <div class="item" title="Team score">🍎 <span id="score">0</span></div>
+    <div class="item" title="Best score">🏆 <span id="best">0</span></div>
     <div class="spacer"></div>
     <div class="pl" id="pl1"><span class="dot" style="background:var(--p1)"></span><span id="pn1">P1</span> <span id="p1">0</span></div>
     <div class="pl" id="pl2"><span class="dot" style="background:var(--p2)"></span><span id="pn2">P2</span> <span id="p2">0</span></div>
+    <span class="ping" id="ping" title="Connection delay to your friend" hidden></span>
+    <button class="icon" id="muteBtn" title="Sound on/off (M)" aria-label="Sound on/off">🔊</button>
+    <button class="icon" id="fsBtn" title="Fullscreen (F)" aria-label="Fullscreen">
+      <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"/></svg>
+    </button>
   </div>
   <div class="stage" id="stage">
     <canvas id="c"></canvas>
     <div class="overlay" id="overlay">
-      <h1 id="ovTitle">Co-op Snake</h1>
-      <p id="ovText"></p>
-      <div class="seg modes menu-only" id="modeSeg">
-        <button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
-      </div>
-      <div class="online menu-only" id="onlinePanel" hidden>
-        <div class="row" id="onIdle">
-          <button class="btn2" id="hostBtn">Host a game</button>
-          <span style="opacity:.7">or</span>
-          <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">
-          <button class="btn2" id="joinBtn">Join</button>
+      <div class="ov-inner">
+        <h1 id="ovTitle">Co-op Snake</h1>
+        <p id="ovText"></p>
+        <div class="seg modes menu-only" id="modeSeg">
+          <button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
         </div>
-        <div class="status" id="onStatus"></div>
-        <button class="link" id="leaveBtn" hidden>Leave online game</button>
+        <div class="online menu-only" id="onlinePanel" hidden>
+          <div class="row" id="onIdle">
+            <button class="btn2" id="hostBtn">Host a game</button>
+            <span style="opacity:.7">or</span>
+            <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">
+            <button class="btn2" id="joinBtn">Join</button>
+          </div>
+          <div class="status" id="onStatus"></div>
+          <button class="link" id="leaveBtn" hidden>Leave online game</button>
+        </div>
+        <div class="keys menu-only" id="keys"></div>
+        <div class="settings menu-only" id="settings">
+          <span>Mode</span>
+          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button></div>
+          <span>Speed</span>
+          <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
+          <span>Apples</span>
+          <div class="seg" data-key="apples"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
+          <span>Board</span>
+          <div class="seg" data-key="board"><button data-v="small">Small</button><button data-v="medium">Medium</button><button data-v="large">Large</button></div>
+          <span>Edges</span>
+          <div class="seg" data-key="mode"><button data-v="walls">Walls</button><button data-v="wrap">Wrap around</button></div>
+          <div class="mode-desc" id="modeDesc"></div>
+        </div>
+        <div class="btns">
+          <button class="btn" id="play">Play</button>
+          <button class="btn secondary paused-only" id="quit">End game</button>
+        </div>
+        <p class="small menu-only" id="help"></p>
       </div>
-      <div class="keys menu-only" id="keys"></div>
-      <div class="settings menu-only" id="settings">
-        <span>Speed</span>
-        <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
-        <span>Apples</span>
-        <div class="seg" data-key="apples"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
-        <span>Board</span>
-        <div class="seg" data-key="board"><button data-v="small">Small</button><button data-v="medium">Medium</button><button data-v="large">Large</button></div>
-        <span>Edges</span>
-        <div class="seg" data-key="mode"><button data-v="walls">Walls</button><button data-v="wrap">Wrap around</button></div>
-      </div>
-      <button class="btn" id="play">Play</button>
-      <p class="small menu-only" id="help"></p>
     </div>
   </div>
-  <div class="hint">Shared score · Don't run into walls, yourself, or your teammate</div>
+  <div class="emotes" id="emoteBar" hidden>
+    <button data-e="0" title="Key 1" aria-label="Thumbs up">👍</button>
+    <button data-e="1" title="Key 2" aria-label="Laughing">😂</button>
+    <button data-e="2" title="Key 3" aria-label="Shocked">😱</button>
+    <button data-e="3" title="Key 4" aria-label="Help">🆘</button>
+  </div>
+  <div class="hint" id="hint"></div>
 </div>
 
 <script>
 // ---------- Config ----------
 const SPEEDS = { slow:180, normal:135, fast:95 };
 const BOARDS = { small:[11,10], medium:[17,15], large:[24,21] };
+const GAMES = {
+  classic: "Crash and you're out for 3 seconds. If you're both down at once, it's game over.",
+  maze: 'Every apple you eat drops a rock somewhere on the board. How long can you survive?',
+  peaceful: 'Nobody can crash! Walls just stop you and you slide through snakes. Relax and eat.',
+};
 const CELL = 40, LIGHT = '#aad751', DARK = '#a2d149';
 const DIRS = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
 const OPP = { up:'down', down:'up', left:'right', right:'left' };
@@ -131,17 +177,30 @@ const KEYMAP = {
   KeyW:[0,'up'], KeyA:[0,'left'], KeyS:[0,'down'], KeyD:[0,'right'],
   ArrowUp:[1,'up'], ArrowLeft:[1,'left'], ArrowDown:[1,'down'], ArrowRight:[1,'right'],
 };
+const EMOTES = ['👍', '😂', '😱', '🆘'];
+const EMOTE_KEYS = {
+  Digit1:[0,0], Digit2:[0,1], Digit3:[0,2], Digit4:[0,3],
+  Digit7:[1,0], Digit8:[1,1], Digit9:[1,2], Digit0:[1,3],
+  Numpad1:[1,0], Numpad2:[1,1], Numpad3:[1,2], Numpad4:[1,3],
+};
 const COLORS = [
   { body:'#4e7cf6', dead:'#8d9bb8' },
   { body:'#a855f7', dead:'#a996b8' },
 ];
 const GOLD_EVERY = 8, GOLD_MS = 6000, GOLD_POINTS = 5, GOLD_GROW = 3;
-const INTRO = `Eat apples together for a shared score.<br>
-  Crashed? You're back in 3s — or instantly when your teammate eats an apple.<br>
-  Grab the ✨ golden apple for +5 before it vanishes!`;
+const TEAM_MS = 1500, TEAM_BONUS = 2, ROCK_MAX = .16, EMOTE_MS = 2200;
+const INTRO = `Eat apples together for one shared score.<br>
+  Crash and you're back in 3s — or instantly when your teammate eats an apple.<br>
+  Eat within a moment of each other for a 🤝 teamwork bonus!`;
 
+// Helpers for checking untrusted values (saved settings, and everything that comes over the network)
 const has = (o, k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k);
-const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls' };
+const num = (v, lo, hi, dflt = lo) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
+const int = (v, lo, hi) => Math.round(num(v, lo, hi));
+const arr = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
+const isIdx = (v, len) => Number.isInteger(v) && v >= 0 && v < len;
+
+const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls', game:'classic' };
 // Only ever accept known setting values (from storage or from an online host)
 function validCfg(c) {
   c = c && typeof c === 'object' ? c : {};
@@ -150,6 +209,7 @@ function validCfg(c) {
     apples: [1, 2, 3, 5].includes(c.apples) ? c.apples : DEFAULT_CFG.apples,
     board: has(BOARDS, c.board) ? c.board : DEFAULT_CFG.board,
     mode: c.mode === 'wrap' ? 'wrap' : 'walls',
+    game: has(GAMES, c.game) ? c.game : DEFAULT_CFG.game,
   };
 }
 function loadCfg() {
@@ -164,16 +224,23 @@ const dpr = Math.max(1, window.devicePixelRatio || 1);
 const $ = id => document.getElementById(id);
 const overlay = $('overlay');
 
-let snakes, apples, score, best = 0, goldCounter = 0;
-let state = 'ready', lastTick = 0, pausedT = 0, countEnd = 0, lastCount = 0, muted = false;
-let particles = [], popups = [], shake = 0;
+let snakes, apples, rocks = [], score, best = 0, bestAtStart = 0, goldCounter = 0, tickNo = 0;
+let stats = { rescues:0, teamwork:0, longest:0 }, lastEat = [-99, -99];
+let state = 'ready', lastTick = 0, pausedT = 0, countEnd = 0, lastCount = 0, overAt = 0;
+let particles = [], popups = [], shake = 0, frameK = 1;
+let muted = false;
+try { muted = localStorage.getItem('coopSnakeMuted') === '1'; } catch (e) {}
+const rockBorn = new Map();
+// Per-player looks that only exist on screen (mouth, blinking, emote bubbles)
+const looks = [0, 1].map(() => ({ mouth:0, blinkAt:0, emote:-1, emoteAt:0, lastEmote:-1e9, hx:0, hy:0 }));
 
 // Online: 'local' = same keyboard, 'host' runs the game, 'guest' mirrors the host.
 let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '';
 let recording = false, outFx = [], inputSeq = 0, unacked = [], hostLastSeq = 0, forceOverlay = false;
-const PEER_PREFIX = 'coop-snake-v1-';
+let inbox = [], applyAt = 0, lastN = -1, pingMs = null, hostPingSeen = 0;
+const PEER_PREFIX = 'coop-snake-v2-';
 
-const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}`;
+const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
 const eq = (a, b) => a.x === b.x && a.y === b.y;
 const inBounds = p => p.x >= 0 && p.y >= 0 && p.x < COLS && p.y < ROWS;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -193,6 +260,13 @@ function toward(a, b, t) {
   return { x: a.x + dx * t, y: a.y + dy * t };
 }
 
+function hintText() {
+  if (cfg.game === 'peaceful') return 'Shared score · Peaceful mode: nobody can crash — pause to end the game';
+  if (cfg.game === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
+  return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
+                             : "Shared score · Don't run into walls, yourself, or your teammate";
+}
+
 function applyConfig() {
   [COLS, ROWS] = BOARDS[cfg.board];
   TICK = SPEEDS[cfg.speed];
@@ -202,29 +276,47 @@ function applyConfig() {
   document.querySelectorAll('.seg[data-key]').forEach(seg => {
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(cfg[seg.dataset.key])));
   });
+  $('modeDesc').textContent = GAMES[cfg.game];
+  $('hint').textContent = hintText();
   try { best = +localStorage.getItem(bestKey()) || 0; } catch (e) { best = 0; }
   $('best').textContent = best;
+  fit();
 }
+
+// Size the board to fit the window (and fill the screen in fullscreen)
+function fit() {
+  if (!COLS) return;
+  const fs = !!document.fullscreenElement;
+  const bar = $('emoteBar').hidden ? 0 : 52;
+  const chrome = $('hud').offsetHeight + $('hint').offsetHeight + bar + 28 + 40;
+  const byHeight = (innerHeight - chrome) * COLS / ROWS + 28;
+  $('wrap').style.width = Math.round(Math.max(280, Math.min(innerWidth * .94, fs ? 1800 : 680, byHeight))) + 'px';
+}
+addEventListener('resize', fit);
+document.addEventListener('fullscreenchange', fit);
 
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
-  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0 };
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false };
 }
 
 function reset() {
   applyConfig();
   const y1 = Math.floor(ROWS * .3), y2 = ROWS - 1 - y1;
   snakes = [makeSnake(0, y1), makeSnake(1, y2)];
+  rocks = []; rockBorn.clear();
   apples = [{x:COLS - 5, y:y1}, {x:COLS - 5, y:y2}].slice(0, cfg.apples);
   while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
-  score = 0; goldCounter = 0; particles = []; popups = []; shake = 0;
+  score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99];
+  stats = { rescues:0, teamwork:0, longest:4 };
+  particles = []; popups = []; shake = 0;
   updateHud();
 }
 
 function occupied() {
   const cells = [];
   snakes.forEach(s => s.alive && cells.push(...s.body));
-  return cells.concat(apples);
+  return cells.concat(apples, rocks);
 }
 
 function spawnApple(gold = false) {
@@ -239,6 +331,28 @@ function spawnApple(gold = false) {
   if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
 }
 
+// Maze mode: drop a rock somewhere that isn't right next to or in front of a snake
+function spawnRock() {
+  if (rocks.length >= Math.floor(COLS * ROWS * ROCK_MAX)) return;
+  const occ = occupied();
+  const heads = snakes.filter(s => s.alive).map(s => ({ h: s.body[0], dir: nextDir(s) }));
+  const tooClose = c => heads.some(({ h, dir }) => {
+    if (Math.abs(h.x - c.x) <= 2 && Math.abs(h.y - c.y) <= 2) return true;
+    for (let i = 0, p = h; i < 6; i++) { p = step(p, dir); if (eq(p, c)) return true; }
+    return false;
+  });
+  const free = [];
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++) {
+    const c = { x, y };
+    if (!occ.some(o => eq(o, c)) && !tooClose(c)) free.push(c);
+  }
+  if (!free.length) return;
+  const r = free[Math.random() * free.length | 0];
+  rocks.push(r);
+  burst(r, '#8a8f98', 10, 2.5);
+  beep(110, .12, 0, 'triangle');
+}
+
 function respawnSnake(s) {
   const occ = occupied();
   const isFree = p => inBounds(p) && !occ.some(c => eq(c, p));
@@ -248,7 +362,7 @@ function respawnSnake(s) {
     const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
     const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
     if (body.every(isFree) && ahead.every(isFree)) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1 });
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false });
       burst(body[0], COLORS[s.id].body, 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
@@ -260,6 +374,8 @@ function respawnSnake(s) {
 // ---------- Game logic (runs on local games and on the online host) ----------
 function tick() {
   recording = true;
+  tickNo++;
+  const peaceful = cfg.game === 'peaceful';
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
 
   apples.forEach(a => { if (a.gold) a.ttl--; });
@@ -269,17 +385,27 @@ function tick() {
   const live = snakes.filter(s => s.alive);
   for (const s of live) {
     if (s.queue.length) s.dir = s.queue.shift();
-    s.next = step(s.body[0], s.dir);
-    s.appleIdx = apples.findIndex(a => eq(a, s.next));
+    const next = step(s.body[0], s.dir);
+    s.next = null;
+    if (peaceful && !inBounds(next)) { // Peaceful: walls just stop you
+      if (!s.blocked) beep(220, .07, 0, 'triangle');
+      s.blocked = true;
+      continue;
+    }
+    s.blocked = false;
+    s.next = next;
+    s.appleIdx = apples.findIndex(a => eq(a, next));
     s.oldBody = s.body.slice(); s.oldPending = s.pending;
   }
-  for (const s of live) {
+  const movers = live.filter(s => s.next);
+  for (const s of movers) {
     s.body.unshift(s.next);
     if (s.pending > 0) s.pending--; else s.body.pop();
   }
-  const dying = live.filter(s => {
+  const dying = peaceful ? [] : movers.filter(s => {
     const h = s.body[0];
     return !inBounds(h)
+      || rocks.some(r => eq(r, h))
       || s.body.some((c, i) => i > 0 && eq(c, h))
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
@@ -291,10 +417,10 @@ function tick() {
   }
   if (dying.length) beep(160, .25, 0, 'sawtooth');
 
-  const eaten = new Set();
-  for (const s of live) {
+  const eaten = new Set(), teamWindow = Math.round(TEAM_MS / TICK);
+  for (const s of movers) {
     if (!s.alive || s.appleIdx < 0 || eaten.has(s.appleIdx)) continue;
-    const a = apples[s.appleIdx];
+    const a = apples[s.appleIdx], mate = snakes[1 - s.id];
     eaten.add(s.appleIdx);
     const pts = a.gold ? GOLD_POINTS : 1;
     s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
@@ -302,15 +428,25 @@ function tick() {
     popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
     if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
     else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
+    // Teamwork bonus: both of you eat within a moment of each other
+    if (tickNo - lastEat[mate.id] <= teamWindow) {
+      score += TEAM_BONUS; stats.teamwork++; lastEat = [-99, -99];
+      popup({ x:a.x, y:a.y - .7 }, 'Teamwork +' + TEAM_BONUS, '#ffe680');
+      beep(1320, .08, .12, 'triangle'); beep(1760, .14, .2, 'triangle');
+    } else lastEat[s.id] = tickNo;
     // Co-op rescue: eating brings a downed teammate straight back
-    const mate = snakes[1 - s.id];
-    if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) popup(mate.body[0], 'Rescued!', '#fff');
+    if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) {
+      stats.rescues++;
+      popup(mate.body[0], 'Rescued!', '#fff');
+    }
   }
   if (eaten.size) {
     apples = apples.filter((_, i) => !eaten.has(i));
     while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
     if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
+    if (cfg.game === 'maze') for (let i = 0; i < eaten.size; i++) spawnRock();
   }
+  stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
   recording = false;
 
   if (!snakes.some(s => s.alive)) gameOver();
@@ -334,6 +470,7 @@ function updateHud() {
 // ---------- Flow ----------
 function beginGame() {
   reset();
+  bestAtStart = best;
   state = 'countdown'; countEnd = performance.now() + 1800; lastCount = 0;
   overlay.classList.add('hidden');
   sendState();
@@ -358,13 +495,18 @@ function showOverlay(title, html, button, paused) {
 function showIntro() { showOverlay('Co-op Snake', INTRO, role === 'guest' ? 'Start' : 'Play'); }
 
 function showGameOver() {
-  const isBest = score > 0 && score >= best;
-  showOverlay(isBest ? 'New best! 🏆' : 'Game over',
-    `You ate <b>${score}</b> apple${score === 1 ? '' : 's'} together!<br>${playerName(0)}: ${snakes[0].apples} · ${playerName(1)}: ${snakes[1].apples}`,
+  const isBest = score > 0 && score > bestAtStart;
+  const secs = Math.round(tickNo * TICK / 1000);
+  const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  showOverlay(isBest ? 'New best! 🏆' : cfg.game === 'peaceful' ? 'Well played!' : 'Game over',
+    `You scored <b>${score}</b> together!<br>${playerName(0)}: ${snakes[0].apples} · ${playerName(1)}: ${snakes[1].apples}
+     <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
+     <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
     'Play again');
 }
 
-function gameOver() { state = 'over'; showGameOver(); sendState(); }
+function gameOver() { state = 'over'; overAt = performance.now(); showGameOver(); sendState(); }
+function endGame() { if (state === 'playing' || state === 'paused') gameOver(); }
 
 function togglePause() {
   if (state === 'playing') {
@@ -375,9 +517,12 @@ function togglePause() {
   } else if (state === 'paused') resume();
 }
 
+// Stops a new game starting by accident while you're still mashing keys after a crash
+const canRestart = () => state !== 'over' || performance.now() - overAt > 700;
+
 function spaceAction() {
   if (state === 'playing' || state === 'paused') togglePause();
-  else if (state !== 'countdown') beginGame();
+  else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
 }
 
 function queueDir(s, dir) {
@@ -387,10 +532,64 @@ function queueDir(s, dir) {
 }
 
 function steer(player, dir) {
-  if (state === 'ready' || state === 'over') beginGame();
+  if (state === 'ready' || state === 'over') { if (!canRestart()) return; beginGame(); }
   if (state !== 'playing' && state !== 'countdown') return;
   const s = snakes[player];
   if (s.alive) queueDir(s, dir);
+}
+
+// ---------- Input (keyboard, touch, controllers, buttons) ----------
+const me = () => role === 'guest' ? 1 : 0;
+const connected = () => !!(conn && conn.open);
+
+function playerSteer(p, dir) {
+  if (role === 'guest') guestSteer(dir);
+  else if (role === 'host') { if (connected()) steer(0, dir); }
+  else if (uiMode === 'local') steer(p, dir);
+}
+
+function pressPause() {
+  if (role === 'guest') { if (connected()) send({ t:'space' }); return; }
+  if (uiMode === 'online' && !connected()) return;
+  spaceAction();
+}
+
+function pressStart() {
+  if (role === 'guest') { if (connected()) send({ t:'start' }); return; }
+  if (uiMode === 'online' && !connected()) return;
+  if (state === 'paused') resume();
+  else if (state === 'ready' || state === 'over') beginGame();
+}
+
+function pressQuit() {
+  if (role === 'guest') { if (connected()) send({ t:'quit' }); return; }
+  endGame();
+}
+
+function showEmote(p, i) {
+  const now = performance.now(), L = looks[p];
+  if (now - L.lastEmote < 450) return false; // no spamming
+  L.lastEmote = now; L.emote = i; L.emoteAt = now;
+  beep(1100 + i * 90, .05, 0, 'sine');
+  return true;
+}
+
+function pressEmote(p, i) {
+  if (role === 'guest') { if (connected() && showEmote(1, i)) send({ t:'emote', i }); }
+  else if (role === 'host') { if (connected() && showEmote(0, i)) send({ t:'emote', p:0, i }); }
+  else if (uiMode === 'local') showEmote(p, i);
+}
+
+function toggleMute() {
+  muted = !muted;
+  try { localStorage.setItem('coopSnakeMuted', muted ? '1' : '0'); } catch (e) {}
+  $('muteBtn').textContent = muted ? '🔇' : '🔊';
+}
+
+function toggleFullscreen() {
+  if (!document.fullscreenEnabled) return;
+  if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+  else document.documentElement.requestFullscreen().catch(() => {});
 }
 
 document.addEventListener('keydown', e => {
@@ -398,31 +597,27 @@ document.addEventListener('keydown', e => {
     if (e.key === 'Enter') joinGame($('codeIn').value);
     return;
   }
-  const m = KEYMAP[e.code];
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const m = KEYMAP[e.code], em = EMOTE_KEYS[e.code];
   if (m || e.code === 'Space') e.preventDefault();
-  if (e.code === 'KeyM') { muted = !muted; return; }
-  const pause = e.code === 'Space' || e.code === 'Enter' || e.code === 'KeyP' || e.code === 'Escape';
-
-  if (role === 'guest') {
-    if (!conn || !conn.open) return;
-    if (pause) send({ t:'space' });
-    else if (m) guestSteer(m[1]);
-    return;
-  }
-  if (uiMode === 'online' && !(conn && conn.open)) return; // waiting for a friend
-  if (pause) {
-    if (state === 'playing' || state === 'paused') togglePause();
-    else if (e.code !== 'Escape' && e.code !== 'KeyP' && state !== 'countdown') beginGame();
-    return;
-  }
-  // Online host controls P1 with either key set
-  if (m) steer(role === 'host' ? 0 : m[0], m[1]);
+  if (e.code === 'KeyM') return toggleMute();
+  if (e.code === 'KeyF') return toggleFullscreen();
+  if (e.code === 'Space' || e.code === 'Enter') return pressPause();
+  if (e.code === 'KeyP' || e.code === 'Escape') { if (state === 'playing' || state === 'paused') pressPause(); return; }
+  if (em) return pressEmote(em[0], em[1]);
+  if (m) playerSteer(m[0], m[1]);
 });
 
-$('play').addEventListener('click', e => {
-  e.target.blur();
-  if (role === 'guest') send({ t:'start' });
-  else state === 'paused' ? resume() : beginGame();
+$('play').addEventListener('click', e => { e.currentTarget.blur(); pressStart(); });
+$('quit').addEventListener('click', e => { e.currentTarget.blur(); pressQuit(); });
+$('muteBtn').addEventListener('click', e => { e.currentTarget.blur(); toggleMute(); });
+$('fsBtn').addEventListener('click', e => { e.currentTarget.blur(); toggleFullscreen(); });
+$('fsBtn').hidden = !document.fullscreenEnabled;
+$('emoteBar').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (!b) return;
+  b.blur();
+  pressEmote(me(), +b.dataset.e);
 });
 
 document.querySelectorAll('.seg[data-key]').forEach(seg => seg.addEventListener('click', e => {
@@ -430,7 +625,7 @@ document.querySelectorAll('.seg[data-key]').forEach(seg => seg.addEventListener(
   if (!b || role === 'guest') return;
   b.blur();
   const k = seg.dataset.key;
-  cfg[k] = k === 'apples' ? +b.dataset.v : b.dataset.v;
+  cfg = validCfg({ ...cfg, [k]: k === 'apples' ? +b.dataset.v : b.dataset.v });
   try { localStorage.setItem('coopSnakeCfg', JSON.stringify(cfg)); } catch (err) {}
   reset();
   sendState();
@@ -438,11 +633,6 @@ document.querySelectorAll('.seg[data-key]').forEach(seg => seg.addEventListener(
 
 // Touch: local = left half P1 / right half P2; online = anywhere steers your own snake
 const touches = {};
-function touchSteer(p, dir) {
-  if (role === 'guest') guestSteer(dir);
-  else if (role === 'host') { if (conn && conn.open) steer(0, dir); }
-  else if (uiMode === 'local') steer(p, dir);
-}
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
   for (const t of e.changedTouches) touches[t.identifier] = { x: t.clientX, y: t.clientY, p: t.clientX < innerWidth / 2 ? 0 : 1 };
@@ -454,41 +644,78 @@ canvas.addEventListener('touchmove', e => {
     if (!s) continue;
     const dx = t.clientX - s.x, dy = t.clientY - s.y;
     if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) continue;
-    touchSteer(s.p, Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+    playerSteer(s.p, Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
     s.x = t.clientX; s.y = t.clientY;
   }
 }, { passive:false });
 canvas.addEventListener('touchend', e => { for (const t of e.changedTouches) delete touches[t.identifier]; });
 
+// Controllers: first pad is P1 and second is P2 (online, any pad steers you).
+// D-pad or left stick steers, Start pauses, A starts/resumes, A/B/X/Y send emotes while playing.
+const padPrev = {};
+function pollPads() {
+  if (!navigator.getGamepads) return;
+  let pads;
+  try { pads = [...navigator.getGamepads()].filter(p => p && p.connected); } catch (e) { return; }
+  pads.forEach((p, order) => {
+    const prev = padPrev[p.index] || (padPrev[p.index] = { dir:null, btn:[] });
+    const player = role === 'local' ? Math.min(order, 1) : me();
+    const down = i => !!(p.buttons[i] && p.buttons[i].pressed);
+    let dir = down(12) ? 'up' : down(13) ? 'down' : down(14) ? 'left' : down(15) ? 'right' : null;
+    if (!dir) {
+      const x = p.axes[0] || 0, y = p.axes[1] || 0;
+      if (Math.max(Math.abs(x), Math.abs(y)) > .5) dir = Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up');
+    }
+    if (dir && dir !== prev.dir) playerSteer(player, dir);
+    prev.dir = dir;
+    const pressed = i => down(i) && !prev.btn[i];
+    if (pressed(9)) pressPause();
+    for (let i = 0; i < 4; i++) if (pressed(i)) {
+      if (state === 'playing' || state === 'countdown') pressEmote(player, i);
+      else if (i === 0 && canRestart()) pressStart();
+    }
+    prev.btn = p.buttons.map(b => b.pressed);
+  });
+}
+
 // ---------- Online ----------
 function playerName(i) {
   if (role === 'local') return 'P' + (i + 1);
-  return (i === (role === 'guest' ? 1 : 0)) ? 'You' : 'Friend';
+  return i === me() ? 'You' : 'Friend';
 }
 function setStatus(html) { $('onStatus').innerHTML = html; }
-function send(m) { if (conn && conn.open) { try { conn.send(m); } catch (e) {} } }
+function send(m) { if (connected()) { try { conn.send(m); } catch (e) {} } }
 const youAre = () => role === 'guest'
   ? '<span class="dot" style="background:var(--p2)"></span> You are <b>purple</b>'
   : '<span class="dot" style="background:var(--p1)"></span> You are <b>blue</b>';
 
 function renderMenu() {
-  const online = uiMode === 'online', connected = !!(conn && conn.open);
+  const online = uiMode === 'online', on = connected();
   $('modeSeg').querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.mode === uiMode));
   $('onlinePanel').hidden = !online;
   $('onIdle').hidden = role !== 'local';
   $('leaveBtn').hidden = role === 'local';
-  $('play').hidden = online && !connected;
+  $('play').hidden = online && !on;
   $('settings').classList.toggle('locked', role === 'guest');
-  $('keys').hidden = online && !connected;
+  $('keys').hidden = online && !on;
   $('keys').innerHTML = online
-    ? `<div>${youAre()} · steer with W A S D or the arrow keys</div>`
-    : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D</div>
-       <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys</div>`;
-  $('help').innerHTML = online
-    ? (role === 'guest' ? 'The host picks the settings · Space to pause · M to mute'
-                        : 'Space to pause · M to mute · keep this tab in front while hosting')
-    : 'Any movement key starts · Space / P to pause · M to mute<br>Touch: swipe on the left half for P1, right half for P2';
+    ? `<div>${youAre()} · steer with W A S D or arrows · emotes 1–4</div>`
+    : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D · emotes 1–4</div>
+       <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys · emotes 7–0</div>`;
+  const common = 'Space pause · M mute · F fullscreen · 🎮 controllers work too';
+  $('help').innerHTML = !online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
+    : role === 'guest' ? `The host picks the settings · ${common}`
+    : `${common}<br>Keep this tab in front while hosting`;
   $('pn1').textContent = playerName(0); $('pn2').textContent = playerName(1);
+  $('emoteBar').hidden = !(role !== 'local' && on);
+  renderPing();
+  fit();
+}
+
+function renderPing() {
+  const show = role !== 'local' && connected() && pingMs !== null;
+  $('ping').hidden = !show;
+  if (show) $('ping').textContent = `📶 ${pingMs} ms`;
 }
 
 $('modeSeg').addEventListener('click', e => {
@@ -507,18 +734,33 @@ function makeCode() {
   return Array.from(crypto.getRandomValues(new Uint32Array(6)), n => A[n % A.length]).join('');
 }
 
+// Invite links only make sense when the game is on a website (like GitHub Pages)
+const canInvite = /^https?:$/.test(location.protocol);
+function waitingStatus(prefix) {
+  setStatus(`${prefix || ''}Room code: <span class="code">${roomCode}</span>` +
+    (canInvite ? `<button class="btn2 invite" id="copyInvite">Copy invite link</button>` : '') +
+    `<br>Send the ${canInvite ? 'link or code' : 'code'} to your friend. Waiting for them to join…`);
+}
+$('onStatus').addEventListener('click', e => {
+  const b = e.target.closest('#copyInvite');
+  if (!b) return;
+  const url = `${location.origin}${location.pathname}#join=${roomCode}`;
+  const done = () => { b.textContent = 'Copied! ✓'; setTimeout(() => { b.textContent = 'Copy invite link'; }, 2000); };
+  const manual = () => prompt('Copy this link and send it to your friend:', url);
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, manual);
+  else manual();
+});
+
 function hostGame() {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
-  role = 'host'; roomCode = makeCode(); conn = null;
+  role = 'host'; roomCode = makeCode(); conn = null; pingMs = null;
   setStatus('Creating room…'); renderMenu();
   peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
-  peer.on('open', () => {
-    setStatus(`Room code: <span class="code">${roomCode}</span><br>Send this code to your friend. Waiting for them to join…`);
-  });
+  peer.on('open', () => waitingStatus());
   peer.on('connection', c => {
-    if (conn && conn.open) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
-    conn = c; hostLastSeq = 0;
+    if (connected()) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
+    conn = c; hostLastSeq = 0; pingMs = null;
     c.on('open', () => {
       state = 'ready'; reset(); showIntro();
       setStatus(`Friend connected to room <b>${roomCode}</b>! Press Play when you're ready.`);
@@ -527,10 +769,10 @@ function hostGame() {
     c.on('data', onHostData);
     c.on('close', () => {
       if (conn !== c) return;
-      conn = null;
+      conn = null; pingMs = null;
       if (role !== 'host') return;
       state = 'ready'; reset(); showIntro();
-      setStatus(`Your friend left. Room code: <span class="code">${roomCode}</span><br>Waiting for someone to join…`);
+      waitingStatus('Your friend left. ');
     });
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
@@ -546,9 +788,12 @@ function joinGame(code) {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
+  inbox = []; lastN = -1; pingMs = null;
   setStatus('Connecting…'); renderMenu();
   const myPeer = peer = new Peer({ debug:0 });
-  const timeout = setTimeout(() => { if (peer === myPeer && !(conn && conn.open)) leaveOnline(`Couldn't reach room ${code}. Check the code and try again.`); }, 15000);
+  const timeout = setTimeout(() => {
+    if (peer === myPeer && !connected()) leaveOnline(`Couldn't reach room ${code}. Check the code and try again.`);
+  }, 15000);
   peer.on('open', () => {
     const c = conn = peer.connect(PEER_PREFIX + code, { reliable:true, serialization:'json' });
     c.on('open', () => {
@@ -556,11 +801,23 @@ function joinGame(code) {
       forceOverlay = true;
       setStatus(`Connected to room <b>${code}</b>! Waiting for the host to start…`);
       renderMenu();
+      send({ t:'ping', ts: performance.now() });
     });
     c.on('data', m => {
       if (!m || typeof m !== 'object') return;
-      if (m.t === 'state') applyState(m);
-      else if (m.t === 'full') leaveOnline('That room is already full.');
+      if (m.t === 'state') {
+        const clean = cleanState(m);
+        if (!clean) return;
+        clean.at = performance.now();
+        inbox.push(clean);
+        if (inbox.length > 30) inbox.splice(0, inbox.length - 30);
+        pumpInbox();
+      } else if (m.t === 'emote') {
+        if (m.p === 0 && isIdx(m.i, EMOTES.length)) showEmote(0, m.i);
+      } else if (m.t === 'pong') {
+        const rtt = performance.now() - m.ts;
+        if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60000) { pingMs = Math.round(rtt); renderPing(); }
+      } else if (m.t === 'full') leaveOnline('That room is already full.');
     });
     c.on('close', () => { if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.'); });
   });
@@ -572,7 +829,7 @@ function joinGame(code) {
 
 function leaveOnline(msg) {
   const oldConn = conn, oldPeer = peer;
-  role = 'local'; conn = null; peer = null;
+  role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1;
   try { oldConn && oldConn.close(); } catch (e) {}
   try { oldPeer && oldPeer.destroy(); } catch (e) {}
   cfg = loadCfg();
@@ -584,11 +841,14 @@ $('hostBtn').addEventListener('click', hostGame);
 $('joinBtn').addEventListener('click', () => joinGame($('codeIn').value));
 $('leaveBtn').addEventListener('click', () => leaveOnline(''));
 
+// The guest measures the connection delay every couple of seconds and shares it with the host
+setInterval(() => { if (role === 'guest' && connected()) send({ t:'ping', ts: performance.now(), rtt: pingMs }); }, 2000);
+
 // Host → guest: full game snapshot every tick, plus the effects that happened
 function sendState() {
-  if (role !== 'host' || !conn || !conn.open) { outFx = []; return; }
+  if (role !== 'host' || !connected()) { outFx = []; return; }
   send({
-    t:'state', state, cfg, score, apples, pausedT, ack: hostLastSeq,
+    t:'state', n: tickNo, state, cfg, score, apples, rocks, stats, pausedT, ack: hostLastSeq,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx })),
@@ -600,17 +860,32 @@ function sendState() {
 // Everything from the guest is untrusted: accept only well-formed messages
 function onHostData(m) {
   if (!m || typeof m !== 'object') return;
-  if (m.t === 'input') {
-    if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
-    hostLastSeq = Math.max(hostLastSeq, m.seq); steer(1, m.dir);
+  switch (m.t) {
+    case 'input':
+      if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
+      hostLastSeq = Math.max(hostLastSeq, m.seq); steer(1, m.dir);
+      break;
+    case 'space': spaceAction(); break;
+    case 'start':
+      if (state === 'paused') resume();
+      else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
+      break;
+    case 'quit': endGame(); break;
+    case 'emote': if (isIdx(m.i, EMOTES.length)) showEmote(1, m.i); break;
+    case 'ping': {
+      const now = performance.now();
+      if (!Number.isFinite(m.ts) || now - hostPingSeen < 300) return;
+      hostPingSeen = now;
+      if (Number.isFinite(m.rtt) && m.rtt >= 0 && m.rtt < 60000) { pingMs = Math.round(m.rtt); renderPing(); }
+      send({ t:'pong', ts: m.ts });
+      break;
+    }
   }
-  else if (m.t === 'space') spaceAction();
-  else if (m.t === 'start') { if (state === 'paused') resume(); else if (state === 'ready' || state === 'over') beginGame(); }
 }
 
 // Guest: show the turn right away, then tell the host
 function guestSteer(dir) {
-  if (!conn || !conn.open) return;
+  if (!connected()) return;
   if ((state === 'playing' || state === 'countdown') && snakes[1].alive) queueDir(snakes[1], dir);
   const seq = ++inputSeq;
   unacked.push({ seq, dir });
@@ -621,64 +896,86 @@ function guestSteer(dir) {
 // Everything from the host is untrusted too: rebuild the state from checked values only
 const STATES = ['ready', 'countdown', 'playing', 'paused', 'over'];
 const HEX = /^#[0-9a-f]{6}$/i;
-const num = (v, lo, hi, dflt = lo) => Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : dflt;
-const int = (v, lo, hi) => Math.round(num(v, lo, hi));
-const cellOf = p => ({ x: int(p && p.x, 0, COLS - 1), y: int(p && p.y, 0, ROWS - 1) });
-const arr = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
 const dirOr = (d, dflt) => has(DIRS, d) ? d : dflt;
 
 function cleanState(m) {
-  const c = validCfg(m.cfg);
-  const [cols, rows] = BOARDS[c.board], cells = cols * rows;
-  if (JSON.stringify(c) !== JSON.stringify(cfg)) { cfg = c; applyConfig(); }
-  const snakeList = arr(m.snakes, 2);
-  if (snakeList.length !== 2) throw new Error('bad snakes');
-  return {
-    state: STATES.includes(m.state) ? m.state : 'ready',
-    score: int(m.score, 0, 1e6),
-    pausedT: num(m.pausedT, 0, 1),
-    countLeft: num(m.countLeft, 0, 5000),
-    ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
-    apples: arr(m.apples, 10).map(a => {
-      const o = cellOf(a);
-      if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
-      return o;
-    }),
-    snakes: snakeList.map((s, id) => {
-      s = s && typeof s === 'object' ? s : {};
-      const body = arr(s.body, cells).map(cellOf);
-      if (!body.length) throw new Error('bad body');
-      return {
-        id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
-        alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
-        pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1),
-      };
-    }),
-    fx: arr(m.fx, 60).filter(f => Array.isArray(f) && has(FX_SAFE, f[0]) && Array.isArray(f[1])),
-  };
+  try {
+    const c = validCfg(m.cfg);
+    const [cols, rows] = BOARDS[c.board], cells = cols * rows;
+    const cellOf = p => ({ x: int(p && p.x, 0, cols - 1), y: int(p && p.y, 0, rows - 1) });
+    const list = arr(m.snakes, 2);
+    if (list.length !== 2) return null;
+    const st = m.stats && typeof m.stats === 'object' ? m.stats : {};
+    return {
+      cfg: c,
+      n: int(m.n, 0, 1e9),
+      state: STATES.includes(m.state) ? m.state : 'ready',
+      score: int(m.score, 0, 1e6),
+      pausedT: num(m.pausedT, 0, 1),
+      countLeft: num(m.countLeft, 0, 5000),
+      ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
+      apples: arr(m.apples, 10).map(a => {
+        const o = cellOf(a);
+        if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
+        return o;
+      }),
+      rocks: arr(m.rocks, cells).map(cellOf),
+      stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells) },
+      snakes: list.map((s, id) => {
+        s = s && typeof s === 'object' ? s : {};
+        const body = arr(s.body, cells).map(cellOf);
+        if (!body.length) throw new Error('bad body');
+        return {
+          id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
+          alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
+          pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1),
+        };
+      }),
+      fx: arr(m.fx, 60).filter(f => Array.isArray(f) && has(FX_SAFE, f[0]) && Array.isArray(f[1])),
+    };
+  } catch (e) { return null; } // ignore malformed messages
 }
 
 // Only these effects can be triggered by the host, with their arguments clamped
+const posOf = p => ({ x: num(p && p.x, -1, COLS), y: num(p && p.y, -1, ROWS) });
 const FX_SAFE = {
   beep: (f, d, delay, type) => beep(num(f, 40, 4000, 440), num(d, .01, .5), num(delay, 0, .5),
     ['square', 'sine', 'sawtooth', 'triangle'].includes(type) ? type : 'square'),
-  burst: (cell, color, n, speed) => burst(cellOf(cell), HEX.test(color) ? color : '#ffffff', int(n, 0, 30), num(speed, 0, 6)),
-  popup: (cell, text, color) => popup(cellOf(cell), String(text).slice(0, 12), HEX.test(color) ? color : '#ffffff'),
+  burst: (p, color, n, speed) => burst(posOf(p), HEX.test(color) ? color : '#ffffff', int(n, 0, 30), num(speed, 0, 6)),
+  popup: (p, text, color) => popup(posOf(p), String(text).slice(0, 12), HEX.test(color) ? color : '#ffffff'),
   shake: () => doShake(),
 };
 
-function applyState(raw) {
-  let m;
-  try { m = cleanState(raw); } catch (e) { return; } // ignore malformed messages
-  const prev = state;
-  state = m.state; score = m.score; apples = m.apples;
-  snakes = m.snakes;
+function setClock(t) { lastTick = t; applyAt = t + TICK; }
+
+// Guest: play each step when the previous one has finished animating, so network jitter doesn't cause stutter
+function pumpInbox() {
+  while (inbox.length) {
+    const m = inbox[0], now = performance.now();
+    const isStep = state === 'playing' && m.n > lastN;
+    if (isStep && now < applyAt - 2 && inbox.length < 3) break;
+    inbox.shift();
+    applyState(m);
+    if (isStep && state === 'playing') {
+      const onTime = now >= applyAt - 2 && now - applyAt <= 25;
+      // A step that had to wait starts 1.5ms early, slowly draining any extra delay
+      setClock(onTime ? applyAt - (applyAt - m.at > 10 ? 1.5 : 0) : now);
+    }
+  }
+}
+
+function applyState(m) {
+  const prev = state, now = performance.now();
+  if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
+  state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
+  snakes = m.snakes; tickNo = m.n; lastN = m.n;
   unacked = unacked.filter(u => u.seq > m.ack);
   if (snakes[1].alive) for (const u of unacked) queueDir(snakes[1], u.dir);
-  if (state === 'countdown') countEnd = performance.now() + m.countLeft;
+  if (state === 'countdown') countEnd = now + m.countLeft;
   if (state === 'paused') pausedT = m.pausedT;
-  if (state === 'countdown' && prev !== 'countdown') { particles = []; popups = []; lastCount = 0; }
-  lastTick = performance.now();
+  if (state === 'countdown' && prev !== 'countdown') { particles = []; popups = []; lastCount = 0; bestAtStart = best; rockBorn.clear(); }
+  if (state === 'playing' && prev !== 'playing') setClock(now - (prev === 'paused' ? m.pausedT * TICK : 0));
+  if (state === 'over' && prev !== 'over') overAt = now;
   for (const [name, args] of m.fx) FX_SAFE[name](...args);
   updateHud();
   if (state !== prev || forceOverlay) {
@@ -730,6 +1027,29 @@ function drawBoard() {
   }
 }
 
+function drawRock(r, now) {
+  const key = r.x + ',' + r.y;
+  if (!rockBorn.has(key)) rockBorn.set(key, now);
+  const a = Math.min(1, (now - rockBorn.get(key)) / 280), u = a - 1;
+  const s = CELL * .42 * (1 + 2.7 * u * u * u + 1.7 * u * u); // pops in with a little overshoot
+  if (s <= 0) return;
+  const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL;
+  ctx.fillStyle = 'rgba(0,0,0,.15)';
+  ctx.beginPath(); ctx.ellipse(cx, cy + s * .75, s * .95, s * .3, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#7b818a';
+  ctx.beginPath();
+  ctx.moveTo(cx - s * .9, cy + s * .5);
+  ctx.quadraticCurveTo(cx - s, cy - s * .5, cx - s * .3, cy - s * .85);
+  ctx.quadraticCurveTo(cx + s * .5, cy - s * 1.05, cx + s * .9, cy - s * .3);
+  ctx.quadraticCurveTo(cx + s * 1.05, cy + s * .5, cx + s * .5, cy + s * .75);
+  ctx.quadraticCurveTo(cx - s * .2, cy + s * .95, cx - s * .9, cy + s * .5);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.28)';
+  ctx.beginPath(); ctx.ellipse(cx - s * .3, cy - s * .4, s * .35, s * .18, -.5, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = CELL * .035; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(cx + s * .15, cy - s * .1); ctx.lineTo(cx + s * .45, cy + s * .25); ctx.stroke();
+}
+
 function drawApple(a, now) {
   if (a.gold && a.ttl < 16 && Math.floor(now / 110) % 2) return; // blink before vanishing
   const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
@@ -758,16 +1078,16 @@ function drawApple(a, now) {
 const px = p => ({ x: (p.x + .5) * CELL, y: (p.y + .5) * CELL });
 const nextDir = s => s.queue.length ? s.queue[0] : s.dir;
 
-function drawSnake(s, t) {
-  const b = s.body, n = b.length;
-  const dir = s.alive ? nextDir(s) : s.dir;
+function drawSnake(s, t, now) {
+  const b = s.body, n = b.length, L = looks[s.id];
+  const dir = s.alive ? nextDir(s) : s.dir, d = DIRS[dir];
   const next = step(b[0], dir);
   const grow = s.pending > 0 || apples.some(a => eq(a, next));
-  // Don't slide the head into a wall or body it's about to crash into
-  const lethal = !inBounds(next)
-    || b.some((c, i) => eq(c, next) && (grow || i < n - 1))
-    || snakes.some(o => o !== s && o.alive && o.body.some(c => eq(c, next)));
-  const tt = s.alive && state === 'playing' || state === 'paused' ? (lethal || !s.alive ? 0 : t) : 0;
+  // Don't slide the head into anything that's about to stop or kill it
+  const blocked = !inBounds(next) || rocks.some(r => eq(r, next)) || (cfg.game !== 'peaceful' && (
+    b.some((c, i) => eq(c, next) && (grow || i < n - 1)) ||
+    snakes.some(o => o !== s && o.alive && o.body.some(c => eq(c, next)))));
+  const tt = s.alive && (state === 'playing' || state === 'paused') && !blocked ? t : 0;
 
   // Draw ahead of the logical position so turns show the instant a key is pressed
   const pts = [toward(b[0], next, tt)];
@@ -784,7 +1104,7 @@ function drawSnake(s, t) {
   }
 
   ctx.save();
-  if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(performance.now() / 120);
+  if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(now / 120);
   const color = s.alive ? COLORS[s.id].body : COLORS[s.id].dead;
   ctx.strokeStyle = color; ctx.lineWidth = CELL * .78; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const run of runs) {
@@ -795,15 +1115,36 @@ function drawSnake(s, t) {
     ctx.stroke();
   }
 
-  const h = px(pts[0]), d = DIRS[dir];
+  const h = px(pts[0]), ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
+  L.hx = h.x; L.hy = h.y;
   if (s.eatFx > 0) { // head bulge after eating
     ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(h.x, h.y, CELL * .39 * (1 + .28 * s.eatFx), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(h.x, h.y, headR, 0, Math.PI * 2); ctx.fill();
   }
-  const fx = h.x + d.x * CELL * .12, fy = h.y + d.y * CELL * .12;
+
+  // Mouth opens when an apple is right ahead, like Google's snake
+  let near = false;
+  if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => eq(a, p)); }
+  L.mouth += ((near ? 1 : 0) - L.mouth) * Math.min(1, .3 * frameK);
+  if (L.mouth > .04) {
+    const open = L.mouth * .7;
+    ctx.fillStyle = '#3d1414';
+    ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.arc(h.x, h.y, headR * .97, ang - open, ang + open); ctx.closePath(); ctx.fill();
+  }
+
+  // Eyes, with the occasional blink
+  if (!L.blinkAt || now > L.blinkAt + 150) L.blinkAt = now + rand(2200, 5200);
+  const blink = s.alive && now >= L.blinkAt && now <= L.blinkAt + 130;
+  const back = CELL * (.12 - .07 * L.mouth);
+  const fx = h.x + d.x * back, fy = h.y + d.y * back;
   const ox = -d.y * CELL * .2, oy = d.x * CELL * .2;
   for (const sgn of [1, -1]) {
     const ex = fx + ox * sgn, ey = fy + oy * sgn;
+    if (blink) {
+      ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .05; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ex - d.x * CELL * .1, ey - d.y * CELL * .1); ctx.lineTo(ex + d.x * CELL * .1, ey + d.y * CELL * .1); ctx.stroke();
+      continue;
+    }
     ctx.fillStyle = '#fff';
     ctx.beginPath(); ctx.arc(ex, ey, CELL * .14, 0, Math.PI * 2); ctx.fill();
     if (s.alive) {
@@ -820,6 +1161,29 @@ function drawSnake(s, t) {
     ctx.fillText(playerName(s.id), h.x, h.y - CELL * .65);
   }
   ctx.restore();
+}
+
+// Emote bubbles float above each snake's head
+function drawEmotes(now) {
+  looks.forEach((L, i) => {
+    if (L.emote < 0) return;
+    const age = now - L.emoteAt;
+    if (age > EMOTE_MS) { L.emote = -1; return; }
+    const W = COLS * CELL, r = CELL * .5;
+    const x = Math.min(W - r - 4, Math.max(r + 4, L.hx));
+    let y = L.hy - CELL * 1.15;
+    if (y < r + 4) y = L.hy + CELL * 1.15;
+    const pop = age < 160 ? .6 + .4 * age / 160 : 1;
+    ctx.save();
+    ctx.globalAlpha = age > EMOTE_MS - 300 ? Math.max(0, (EMOTE_MS - age) / 300) : 1;
+    ctx.translate(x, y); ctx.scale(pop, pop);
+    ctx.fillStyle = '#fff'; ctx.strokeStyle = COLORS[i].body; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.font = `${CELL * .55}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(EMOTES[L.emote], 0, 2);
+    ctx.restore();
+  });
 }
 
 function drawEffects(k) {
@@ -858,7 +1222,7 @@ function drawCountdown(now) {
 function update() {
   const now = performance.now();
   if (state === 'countdown' && now >= countEnd) {
-    state = 'playing'; lastTick = now; beep(990, .15);
+    state = 'playing'; setClock(now); beep(990, .15);
     if (role === 'guest') return;
     sendState();
   }
@@ -870,26 +1234,40 @@ setInterval(update, 8);
 
 let lastFrame = performance.now();
 function frame(now) {
-  const k = Math.min(3, (now - lastFrame) / 16.67); lastFrame = now;
+  frameK = Math.min(3, (now - lastFrame) / 16.67); lastFrame = now;
+  pollPads();
+  if (role === 'guest') pumpInbox();
   update();
-  const t = state === 'playing' ? Math.min(1, (now - lastTick) / TICK) : state === 'paused' ? pausedT : 0;
+  const t = state === 'playing' ? Math.max(0, Math.min(1, (now - lastTick) / TICK)) : state === 'paused' ? pausedT : 0;
 
   ctx.save();
-  if (shake > .02) { ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10); shake *= Math.pow(.88, k); }
+  if (shake > .02) { ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10); shake *= Math.pow(.88, frameK); }
   drawBoard();
+  rocks.forEach(r => drawRock(r, now));
   apples.forEach(a => drawApple(a, now));
-  snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t));
-  snakes.filter(s => s.alive).forEach(s => drawSnake(s, t));
-  snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * k); });
-  drawEffects(k);
+  snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t, now));
+  snakes.filter(s => s.alive).forEach(s => drawSnake(s, t, now));
+  snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * frameK); });
+  drawEffects(frameK);
+  drawEmotes(now);
   ctx.restore();
   if (state === 'countdown') drawCountdown(now);
   requestAnimationFrame(frame);
 }
 
+$('muteBtn').textContent = muted ? '🔇' : '🔊';
 reset();
 showIntro();
 requestAnimationFrame(frame);
+
+// Opened from an invite link (…/#join=CODE)? Jump straight into that room.
+const invite = /^#join=([A-Za-z0-9]{6})$/.exec(location.hash);
+if (invite) {
+  history.replaceState(null, '', location.pathname + location.search);
+  uiMode = 'online';
+  $('codeIn').value = invite[1].toUpperCase();
+  joinGame(invite[1]);
+}
 </script>
 </body>
 </html>
