@@ -189,6 +189,8 @@ const COLORS = [
 ];
 const GOLD_EVERY = 8, GOLD_MS = 6000, GOLD_POINTS = 5, GOLD_GROW = 3;
 const TEAM_MS = 1500, TEAM_BONUS = 2, ROCK_MAX = .16, EMOTE_MS = 2200;
+// How far back (in time) a late key press from an online friend can still count
+const REWIND_MS = 450;
 const INTRO = `Eat apples together for one shared score.<br>
   Crash and you're back in 3s — or instantly when your teammate eats an apple.<br>
   Eat within a moment of each other for a 🤝 teamwork bonus!`;
@@ -241,6 +243,7 @@ let inbox = [], applyAt = 0, lastN = -1, pingMs = null, hostPingSeen = 0;
 const PEER_PREFIX = 'coop-snake-v2-';
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
+const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
 const eq = (a, b) => a.x === b.x && a.y === b.y;
 const inBounds = p => p.x >= 0 && p.y >= 0 && p.x < COLS && p.y < ROWS;
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -297,7 +300,7 @@ document.addEventListener('fullscreenchange', fit);
 
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
-  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false };
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[] };
 }
 
 function reset() {
@@ -362,7 +365,7 @@ function respawnSnake(s) {
     const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
     const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
     if (body.every(isFree) && ahead.every(isFree)) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false });
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true });
       burst(body[0], COLORS[s.id].body, 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
@@ -376,6 +379,7 @@ function tick() {
   recording = true;
   tickNo++;
   const peaceful = cfg.game === 'peaceful';
+  snakes.forEach(s => { s.fresh = false; s.ateNow = false; });
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
 
   apples.forEach(a => { if (a.gold) a.ttl--; });
@@ -384,7 +388,9 @@ function tick() {
 
   const live = snakes.filter(s => s.alive);
   for (const s of live) {
+    const was = s.dir;
     if (s.queue.length) s.dir = s.queue.shift();
+    s.turned = s.dir !== was;
     const next = step(s.body[0], s.dir);
     s.next = null;
     if (peaceful && !inBounds(next)) { // Peaceful: walls just stop you
@@ -400,7 +406,7 @@ function tick() {
   const movers = live.filter(s => s.next);
   for (const s of movers) {
     s.body.unshift(s.next);
-    if (s.pending > 0) s.pending--; else s.body.pop();
+    if (s.pending > 0) { s.pending--; s.popped = null; } else s.popped = s.body.pop();
   }
   const dying = peaceful ? [] : movers.filter(s => {
     const h = s.body[0];
@@ -410,41 +416,29 @@ function tick() {
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
   for (const s of dying) {
-    s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = [];
+    s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = []; s.log = [];
     s.respawn = RESPAWN_TICKS;
     burst(s.body[0], COLORS[s.id].body, 22, 4);
     doShake();
   }
   if (dying.length) beep(160, .25, 0, 'sawtooth');
 
-  const eaten = new Set(), teamWindow = Math.round(TEAM_MS / TICK);
+  const eaten = new Set();
   for (const s of movers) {
     if (!s.alive || s.appleIdx < 0 || eaten.has(s.appleIdx)) continue;
-    const a = apples[s.appleIdx], mate = snakes[1 - s.id];
-    eaten.add(s.appleIdx);
-    const pts = a.gold ? GOLD_POINTS : 1;
-    s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
-    burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
-    popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
-    if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
-    else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
-    // Teamwork bonus: both of you eat within a moment of each other
-    if (tickNo - lastEat[mate.id] <= teamWindow) {
-      score += TEAM_BONUS; stats.teamwork++; lastEat = [-99, -99];
-      popup({ x:a.x, y:a.y - .7 }, 'Teamwork +' + TEAM_BONUS, '#ffe680');
-      beep(1320, .08, .12, 'triangle'); beep(1760, .14, .2, 'triangle');
-    } else lastEat[s.id] = tickNo;
-    // Co-op rescue: eating brings a downed teammate straight back
-    if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) {
-      stats.rescues++;
-      popup(mate.body[0], 'Rescued!', '#fff');
-    }
+    eaten.add(s.appleIdx); s.ateNow = true;
+    eatApple(s, apples[s.appleIdx]);
   }
   if (eaten.size) {
     apples = apples.filter((_, i) => !eaten.has(i));
-    while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
-    if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
-    if (cfg.game === 'maze') for (let i = 0; i < eaten.size; i++) spawnRock();
+    refillAfterEating(eaten.size);
+  }
+  // Remember each snake's last few moves, so a late key press from an online friend can still count
+  for (const s of live) {
+    if (!s.alive || s.fresh) { s.log = []; continue; }
+    s.log.unshift(s.next ? { tail:s.popped, turn:s.turned, ate:s.ateNow, ok:!dying.length }
+                         : { tail:null, turn:false, ate:false, ok:false });
+    if (s.log.length > maxRewind()) s.log.length = maxRewind();
   }
   stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
   recording = false;
@@ -452,6 +446,131 @@ function tick() {
   if (!snakes.some(s => s.alive)) gameOver();
   updateHud();
   sendState();
+}
+
+function eatApple(s, a) {
+  const mate = snakes[1 - s.id], pts = a.gold ? GOLD_POINTS : 1;
+  s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
+  burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
+  popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
+  if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
+  else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
+  // Teamwork bonus: both of you eat within a moment of each other
+  if (tickNo - lastEat[mate.id] <= Math.round(TEAM_MS / TICK)) {
+    score += TEAM_BONUS; stats.teamwork++; lastEat = [-99, -99];
+    popup({ x:a.x, y:a.y - .7 }, 'Teamwork +' + TEAM_BONUS, '#ffe680');
+    beep(1320, .08, .12, 'triangle'); beep(1760, .14, .2, 'triangle');
+  } else lastEat[s.id] = tickNo;
+  // Co-op rescue: eating brings a downed teammate straight back
+  if (!mate.alive && mate.respawn > 0 && respawnSnake(mate)) {
+    stats.rescues++;
+    popup(mate.body[0], 'Rescued!', '#fff');
+  }
+}
+
+function refillAfterEating(count) {
+  while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
+  if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
+  if (cfg.game === 'maze') for (let i = 0; i < count; i++) spawnRock();
+}
+
+// ---------- Turning ----------
+// How far (0–1) the snakes are through the current move, as drawn on screen
+const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.now() - lastTick) / TICK)) : 0;
+
+// Would moving `dir` next stop or kill snake s? Its head is held back instead of sliding into trouble.
+function aheadBlocked(s, dir) {
+  const b = s.body, next = step(b[0], dir);
+  if (!inBounds(next) || rocks.some(r => eq(r, next))) return true;
+  if (cfg.game === 'peaceful') return false;
+  // A tail is safe to follow, since it moves out of the way on the same step (unless that snake is growing)
+  const hits = o => o.body.some((c, i) => eq(c, next) && (o.pending > 0 || i < o.body.length - 1));
+  return hits(s) || snakes.some(o => o !== s && o.alive && hits(o));
+}
+
+// Which move a new key press turns on: the square the head is drawn in. Once the head is more than
+// halfway into the next square, the turn happens there instead of snapping the head back.
+function turnMove(s, n) {
+  const late = !s.queue.length && stepT() >= .5 && !aheadBlocked(s, s.dir);
+  return n + 1 + s.queue.length + (late ? 1 : 0);
+}
+
+// Queue a turn for move number `at` (n = the last move made), going straight until then
+function queueAt(s, dir, at, n) {
+  const last = s.queue.length ? s.queue[s.queue.length - 1] : s.dir;
+  if (dir === last || dir === OPP[last]) return false;
+  while (s.queue.length < 2 && n + 1 + s.queue.length < at) s.queue.push(last);
+  if (s.queue.length >= 3) return false;
+  s.queue.push(dir);
+  return true;
+}
+
+// Bodies a snake had at the end of each of its last k moves, newest first
+// (null where it had only just come back to life, or null overall if we can't tell)
+function pastBodies(s, k) {
+  const out = [s.body];
+  let b = s.body;
+  for (let i = 0; i < k - 1; i++) {
+    const r = s.log[i];
+    if (!r) { while (out.length < k) out.push(null); break; }
+    if (!r.ok) return null;
+    b = b.slice(1);
+    if (r.tail) b.push(r.tail);
+    out.push(b);
+  }
+  return out;
+}
+
+// Online lag fix: redo snake s's last k moves as if it had turned to `dir` k moves ago.
+// The host does this when the friend's key press arrives late, and the friend's game uses the same
+// rules to show it straight away, so their snake turns exactly where they pressed.
+// Returns null if that wouldn't be safe (then the turn just happens on the next move instead).
+function replayTurn(s, k, dir, other) {
+  if (!s.alive || s.queue.length || k < 1 || k > s.log.length) return null;
+  if (dir === s.dir || dir === OPP[s.dir]) return null;
+  const recent = s.log.slice(0, k);
+  if (!recent.every(r => r.ok && !r.turn && !r.ate)) return null;
+  const peaceful = cfg.game === 'peaceful';
+  const others = other.alive && !peaceful ? pastBodies(other, k) : [];
+  if (!others) return null;
+  let body = s.body;
+  for (const r of recent) { body = body.slice(1); if (r.tail) body.push(r.tail); }
+  const log = [];
+  let eat = false;
+  for (let j = k - 1; j >= 0; j--) {
+    const head = step(body[0], dir);
+    if (!inBounds(head) || rocks.some(c => eq(c, head))) return null;
+    body = [head, ...body];
+    const tail = recent[j].tail ? body.pop() : null;
+    if (!peaceful) {
+      if (body.some((c, i) => i > 0 && eq(c, head))) return null;
+      const ob = others[j];
+      if (ob && (ob.some(c => eq(c, head)) || body.some(c => eq(c, ob[0])))) return null;
+    }
+    if (apples.some(a => eq(a, head))) { if (j > 0) return null; eat = true; }
+    log.unshift({ tail, turn: j === k - 1, ate: false, ok: true });
+  }
+  return { body, log: log.concat(s.log.slice(k)), eat };
+}
+
+// Host: the friend's turn was meant for a move that already happened
+function lateTurn(dir, at) {
+  const s = snakes[1], k = tickNo - at + 1;
+  if (k > maxRewind()) return false;
+  const r = replayTurn(s, k, dir, snakes[0]);
+  if (!r) return false;
+  s.body = r.body; s.dir = dir; s.log = r.log;
+  const i = r.eat ? apples.findIndex(a => eq(a, s.body[0])) : -1;
+  if (i >= 0) {
+    recording = true;
+    eatApple(s, apples.splice(i, 1)[0]);
+    s.log[0].ate = true;
+    refillAfterEating(1);
+    recording = false;
+  }
+  updateHud();
+  sendState();
+  return true;
 }
 
 function updateHud() {
@@ -525,17 +644,11 @@ function spaceAction() {
   else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
 }
 
-function queueDir(s, dir) {
-  const last = s.queue.length ? s.queue[s.queue.length - 1] : s.dir;
-  if (dir !== last && dir !== OPP[last] && s.queue.length < 3) { s.queue.push(dir); return true; }
-  return false;
-}
-
 function steer(player, dir) {
   if (state === 'ready' || state === 'over') { if (!canRestart()) return; beginGame(); }
   if (state !== 'playing' && state !== 'countdown') return;
   const s = snakes[player];
-  if (s.alive) queueDir(s, dir);
+  if (s.alive) queueAt(s, dir, turnMove(s, tickNo), tickNo);
 }
 
 // ---------- Input (keyboard, touch, controllers, buttons) ----------
@@ -653,8 +766,10 @@ canvas.addEventListener('touchend', e => { for (const t of e.changedTouches) del
 // Controllers: first pad is P1 and second is P2 (online, any pad steers you).
 // D-pad or left stick steers, Start pauses, A starts/resumes, A/B/X/Y send emotes while playing.
 const padPrev = {};
+let padsSeen = false;
+addEventListener('gamepadconnected', () => { padsSeen = true; });
 function pollPads() {
-  if (!navigator.getGamepads) return;
+  if (!padsSeen || !navigator.getGamepads) return;
   let pads;
   try { pads = [...navigator.getGamepads()].filter(p => p && p.connected); } catch (e) { return; }
   pads.forEach((p, order) => {
@@ -663,8 +778,9 @@ function pollPads() {
     const down = i => !!(p.buttons[i] && p.buttons[i].pressed);
     let dir = down(12) ? 'up' : down(13) ? 'down' : down(14) ? 'left' : down(15) ? 'right' : null;
     if (!dir) {
-      const x = p.axes[0] || 0, y = p.axes[1] || 0;
-      if (Math.max(Math.abs(x), Math.abs(y)) > .5) dir = Math.abs(x) > Math.abs(y) ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up');
+      const x = p.axes[0] || 0, y = p.axes[1] || 0, ax = Math.abs(x), ay = Math.abs(y);
+      // Near a diagonal, keep the previous direction so a wobbly stick doesn't flip back and forth
+      if (Math.max(ax, ay) > .5) dir = Math.abs(ax - ay) < .2 ? prev.dir : ax > ay ? (x > 0 ? 'right' : 'left') : (y > 0 ? 'down' : 'up');
     }
     if (dir && dir !== prev.dir) playerSteer(player, dir);
     prev.dir = dir;
@@ -785,6 +901,7 @@ function hostGame() {
 function joinGame(code) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) return setStatus('Enter the 6-character room code.');
+  if (document.activeElement) document.activeElement.blur(); // so the keys steer instead of typing
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
@@ -851,7 +968,7 @@ function sendState() {
     t:'state', n: tickNo, state, cfg, score, apples, rocks, stats, pausedT, ack: hostLastSeq,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
-      apples:s.apples, pending:s.pending, eatFx:s.eatFx })),
+      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log })),
     fx: outFx,
   });
   outFx = [];
@@ -861,10 +978,17 @@ function sendState() {
 function onHostData(m) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
-    case 'input':
+    case 'input': {
       if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
-      hostLastSeq = Math.max(hostLastSeq, m.seq); steer(1, m.dir);
+      hostLastSeq = Math.max(hostLastSeq, m.seq);
+      // `at` = the move the friend meant to turn on, based on what their screen showed
+      const at = Number.isSafeInteger(m.at) ? m.at : tickNo + 1;
+      if (state === 'playing' && at <= tickNo && lateTurn(m.dir, at)) return;
+      if (state === 'ready' || state === 'over') steer(1, m.dir);
+      else if ((state === 'playing' || state === 'countdown') && snakes[1].alive)
+        queueAt(snakes[1], m.dir, Math.min(at, tickNo + 3), tickNo);
       break;
+    }
     case 'space': spaceAction(); break;
     case 'start':
       if (state === 'paused') resume();
@@ -883,14 +1007,20 @@ function onHostData(m) {
   }
 }
 
-// Guest: show the turn right away, then tell the host
+// Guest: show the turn right away, then tell the host which move it was meant for
 function guestSteer(dir) {
   if (!connected()) return;
-  if ((state === 'playing' || state === 'countdown') && snakes[1].alive) queueDir(snakes[1], dir);
+  const s = snakes[1], live = state === 'playing' || state === 'countdown';
+  let at = lastN + 1;
+  if (live) {
+    if (!s.alive) return;
+    at = turnMove(s, lastN);
+    if (!queueAt(s, dir, at, lastN)) return; // same or opposite way: nothing would change
+  }
   const seq = ++inputSeq;
-  unacked.push({ seq, dir });
+  unacked.push({ seq, dir, at });
   if (unacked.length > 6) unacked.shift();
-  send({ t:'input', dir, seq });
+  send({ t:'input', dir, seq, at });
 }
 
 // Everything from the host is untrusted too: rebuild the state from checked values only
@@ -929,6 +1059,9 @@ function cleanState(m) {
           id, body, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
           pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1),
+          log: arr(s.log, 8).map(r => r && typeof r === 'object'
+            ? { tail: r.tail ? cellOf(r.tail) : null, turn: r.turn === true, ate: r.ate === true, ok: r.ok === true }
+            : { tail: null, turn: false, ate: false, ok: false }),
         };
       }),
       fx: arr(m.fx, 60).filter(f => Array.isArray(f) && has(FX_SAFE, f[0]) && Array.isArray(f[1])),
@@ -969,8 +1102,14 @@ function applyState(m) {
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
+  // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
   unacked = unacked.filter(u => u.seq > m.ack);
-  if (snakes[1].alive) for (const u of unacked) queueDir(snakes[1], u.dir);
+  const mine = snakes[1];
+  if (mine.alive && (state === 'playing' || state === 'countdown')) for (const u of unacked) {
+    const r = state === 'playing' && u.at <= m.n ? replayTurn(mine, m.n - u.at + 1, u.dir, snakes[0]) : null;
+    if (r) { mine.body = r.body; mine.dir = u.dir; mine.log = r.log; }
+    else queueAt(mine, u.dir, u.at, m.n);
+  }
   if (state === 'countdown') countEnd = now + m.countLeft;
   if (state === 'paused') pausedT = m.pausedT;
   if (state === 'countdown' && prev !== 'countdown') { particles = []; popups = []; lastCount = 0; bestAtStart = best; rockBorn.clear(); }
@@ -1082,12 +1221,10 @@ function drawSnake(s, t, now) {
   const b = s.body, n = b.length, L = looks[s.id];
   const dir = s.alive ? nextDir(s) : s.dir, d = DIRS[dir];
   const next = step(b[0], dir);
-  const grow = s.pending > 0 || apples.some(a => eq(a, next));
+  // The tail only stays put on moves where the snake is growing (it grows the move after eating)
+  const grow = s.pending > 0;
   // Don't slide the head into anything that's about to stop or kill it
-  const blocked = !inBounds(next) || rocks.some(r => eq(r, next)) || (cfg.game !== 'peaceful' && (
-    b.some((c, i) => eq(c, next) && (grow || i < n - 1)) ||
-    snakes.some(o => o !== s && o.alive && o.body.some(c => eq(c, next)))));
-  const tt = s.alive && (state === 'playing' || state === 'paused') && !blocked ? t : 0;
+  const tt = s.alive && (state === 'playing' || state === 'paused') && !aheadBlocked(s, dir) ? t : 0;
 
   // Draw ahead of the logical position so turns show the instant a key is pressed
   const pts = [toward(b[0], next, tt)];
@@ -1095,12 +1232,27 @@ function drawSnake(s, t, now) {
   for (let i = 0; i < keep; i++) pts.push(b[i]);
   if (keep < n) pts.push(toward(b[n - 1], b[n - 2] || b[0], tt));
 
-  // Split the path wherever it wraps across an edge
+  // Where the path wraps across an edge, run off that side and back in from the opposite one
   const runs = [[pts[0]]];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], c = pts[i];
-    if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) runs.push([]);
+    if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) {
+      const w = toward(a, c, 1), dx = w.x - a.x, dy = w.y - a.y;
+      runs[runs.length - 1].push({ x: a.x + dx, y: a.y + dy });
+      runs.push([{ x: c.x - dx, y: c.y - dy }]);
+    }
     runs[runs.length - 1].push(c);
+  }
+  // A head sliding off one edge also pokes in from the opposite one
+  const heads = [pts[0]];
+  if (cfg.mode === 'wrap') {
+    const hp = pts[0];
+    const wx = hp.x > COLS - 1 ? hp.x - COLS : hp.x < 0 ? hp.x + COLS : hp.x;
+    const wy = hp.y > ROWS - 1 ? hp.y - ROWS : hp.y < 0 ? hp.y + ROWS : hp.y;
+    if (wx !== hp.x || wy !== hp.y) {
+      heads.push({ x: wx, y: wy });
+      runs.push([{ x: wx, y: wy }, { x: wx - d.x, y: wy - d.y }]);
+    }
   }
 
   ctx.save();
@@ -1115,47 +1267,50 @@ function drawSnake(s, t, now) {
     ctx.stroke();
   }
 
-  const h = px(pts[0]), ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
-  L.hx = h.x; L.hy = h.y;
-  if (s.eatFx > 0) { // head bulge after eating
-    ctx.fillStyle = color;
-    ctx.beginPath(); ctx.arc(h.x, h.y, headR, 0, Math.PI * 2); ctx.fill();
-  }
-
+  const ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
   // Mouth opens when an apple is right ahead, like Google's snake
   let near = false;
   if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => eq(a, p)); }
   L.mouth += ((near ? 1 : 0) - L.mouth) * Math.min(1, .3 * frameK);
-  if (L.mouth > .04) {
-    const open = L.mouth * .7;
-    ctx.fillStyle = '#3d1414';
-    ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.arc(h.x, h.y, headR * .97, ang - open, ang + open); ctx.closePath(); ctx.fill();
-  }
-
   // Eyes, with the occasional blink
   if (!L.blinkAt || now > L.blinkAt + 150) L.blinkAt = now + rand(2200, 5200);
   const blink = s.alive && now >= L.blinkAt && now <= L.blinkAt + 130;
-  const back = CELL * (.12 - .07 * L.mouth);
-  const fx = h.x + d.x * back, fy = h.y + d.y * back;
-  const ox = -d.y * CELL * .2, oy = d.x * CELL * .2;
-  for (const sgn of [1, -1]) {
-    const ex = fx + ox * sgn, ey = fy + oy * sgn;
-    if (blink) {
-      ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .05; ctx.lineCap = 'round';
-      ctx.beginPath(); ctx.moveTo(ex - d.x * CELL * .1, ey - d.y * CELL * .1); ctx.lineTo(ex + d.x * CELL * .1, ey + d.y * CELL * .1); ctx.stroke();
-      continue;
+
+  for (const hp of heads) {
+    const h = px(hp);
+    if (hp.x >= -.5 && hp.x <= COLS - .5 && hp.y >= -.5 && hp.y <= ROWS - .5) { L.hx = h.x; L.hy = h.y; }
+    if (s.eatFx > 0) { // head bulge after eating
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.arc(h.x, h.y, headR, 0, Math.PI * 2); ctx.fill();
     }
-    ctx.fillStyle = '#fff';
-    ctx.beginPath(); ctx.arc(ex, ey, CELL * .14, 0, Math.PI * 2); ctx.fill();
-    if (s.alive) {
-      ctx.fillStyle = '#1b1b1b';
-      ctx.beginPath(); ctx.arc(ex + d.x * CELL * .05, ey + d.y * CELL * .05, CELL * .075, 0, Math.PI * 2); ctx.fill();
-    } else {
-      ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .04; const k = CELL * .07;
-      ctx.beginPath(); ctx.moveTo(ex - k, ey - k); ctx.lineTo(ex + k, ey + k);
-      ctx.moveTo(ex + k, ey - k); ctx.lineTo(ex - k, ey + k); ctx.stroke();
+    if (L.mouth > .04) {
+      const open = L.mouth * .7;
+      ctx.fillStyle = '#3d1414';
+      ctx.beginPath(); ctx.moveTo(h.x, h.y); ctx.arc(h.x, h.y, headR * .97, ang - open, ang + open); ctx.closePath(); ctx.fill();
+    }
+    const back = CELL * (.12 - .07 * L.mouth);
+    const fx = h.x + d.x * back, fy = h.y + d.y * back;
+    const ox = -d.y * CELL * .2, oy = d.x * CELL * .2;
+    for (const sgn of [1, -1]) {
+      const ex = fx + ox * sgn, ey = fy + oy * sgn;
+      if (blink) {
+        ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .05; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(ex - d.x * CELL * .1, ey - d.y * CELL * .1); ctx.lineTo(ex + d.x * CELL * .1, ey + d.y * CELL * .1); ctx.stroke();
+        continue;
+      }
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.arc(ex, ey, CELL * .14, 0, Math.PI * 2); ctx.fill();
+      if (s.alive) {
+        ctx.fillStyle = '#1b1b1b';
+        ctx.beginPath(); ctx.arc(ex + d.x * CELL * .05, ey + d.y * CELL * .05, CELL * .075, 0, Math.PI * 2); ctx.fill();
+      } else {
+        ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .04; const k = CELL * .07;
+        ctx.beginPath(); ctx.moveTo(ex - k, ey - k); ctx.lineTo(ex + k, ey + k);
+        ctx.moveTo(ex + k, ey - k); ctx.lineTo(ex - k, ey + k); ctx.stroke();
+      }
     }
   }
+  const h = px(pts[0]);
   if (state === 'ready' || state === 'countdown') {
     ctx.fillStyle = '#fff'; ctx.font = `bold ${CELL * .4}px Roboto, Arial`; ctx.textAlign = 'center';
     ctx.fillText(playerName(s.id), h.x, h.y - CELL * .65);
@@ -1231,6 +1386,12 @@ function update() {
   while (state === 'playing' && now - lastTick >= TICK) { lastTick += TICK; tick(); }
 }
 setInterval(update, 8);
+// Browsers slow timers in hidden or covered windows to about once a second, which would freeze an online
+// game whenever the host switches to another window. Timers in a worker keep running, so use one too.
+try {
+  const worker = new Worker(URL.createObjectURL(new Blob(['setInterval(() => postMessage(0), 8)'], { type:'text/javascript' })));
+  worker.onmessage = () => update();
+} catch (e) {}
 
 let lastFrame = performance.now();
 function frame(now) {
