@@ -51,6 +51,7 @@
   .settings.locked .seg { opacity:.55; pointer-events:none; }
   .mode-desc { grid-column:1 / -1; font-size:12px; opacity:.85; max-width:380px; justify-self:center; line-height:1.4; }
   .seg { display:inline-flex; background:rgba(0,0,0,.3); border-radius:8px; padding:3px; }
+  .seg[data-key="game"] { flex-wrap:wrap; justify-content:center; max-width:290px; }
   .seg button {
     background:none; border:0; color:#fff; font:inherit; font-size:13px; padding:5px 11px;
     border-radius:6px; cursor:pointer; opacity:.75;
@@ -144,7 +145,7 @@
         <div class="skins menu-only" id="skinPanel" hidden></div>
         <div class="settings menu-only" id="settings">
           <span>Mode</span>
-          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button></div>
+          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button></div>
           <span>Speed</span>
           <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
           <span>Apples</span>
@@ -180,6 +181,9 @@ const GAMES = {
   classic: "Crash and you're out for 3 seconds. If you're both down at once, it's game over.",
   maze: 'Every apple you eat drops a rock somewhere on the board. How long can you survive?',
   peaceful: 'Nobody can crash! Walls just stop you and you slide through snakes. Relax and eat.',
+  poison: 'Dark ☠ apples are poison: eating one knocks you out. They jump to new spots whenever an apple is eaten.',
+  portal: 'Two pairs of portals: go into one and you pop out of its twin, still heading the same way.',
+  speed: 'Every point the team scores makes both snakes a little faster. How far can you push it?',
 };
 const CELL = 40, LIGHT = '#aad751', DARK = '#a2d149';
 const DIRS = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
@@ -296,6 +300,29 @@ function step(p, dir) {
   return { x, y };
 }
 
+// Portal mode: two pairs of portals; portals[i] is linked to portals[i ^ 1]
+let portals = [];
+const PORTAL_COLORS = ['#ff9f1c', '#2ec4f1'];
+const portalAt = p => portals.findIndex(q => eq(q, p));
+// Where a move from p in `dir` really ends up (stepping into a portal pops you out of its twin)
+function dest(p, dir) {
+  const n = step(p, dir), i = portalAt(n);
+  return i < 0 ? n : { ...portals[i ^ 1] };
+}
+// Are two body squares next to each other (counting wrap-around edges)?
+function touching(a, c) {
+  let dx = Math.abs(a.x - c.x), dy = Math.abs(a.y - c.y);
+  if (cfg.mode === 'wrap') { dx = Math.min(dx, COLS - dx); dy = Math.min(dy, ROWS - dy); }
+  return dx + dy === 1;
+}
+// For drawing: from body square `older`, which square does the body head toward? Usually `newer`,
+// but if the snake went through a portal there, it's the entrance portal next to `older`.
+function linkNext(older, newer) {
+  if (touching(older, newer)) return newer;
+  const i = portalAt(newer);
+  return i >= 0 && touching(older, portals[i ^ 1]) ? portals[i ^ 1] : newer;
+}
+
 // Move t of the way from a toward b, taking the short way across a wrapped edge.
 function toward(a, b, t) {
   let dx = b.x - a.x, dy = b.y - a.y;
@@ -306,6 +333,9 @@ function toward(a, b, t) {
 
 function hintText() {
   if (cfg.game === 'peaceful') return 'Shared score · Peaceful mode: nobody can crash — pause to end the game';
+  if (cfg.game === 'poison') return 'Shared score · Skip the dark ☠ apples — they knock you out';
+  if (cfg.game === 'portal') return 'Shared score · Portals connect in matching colors — use them to cross the board';
+  if (cfg.game === 'speed') return 'Shared score · Every point makes you faster';
   if (cfg.game === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
@@ -348,9 +378,11 @@ function reset() {
   applyConfig();
   const y1 = Math.floor(ROWS * .3), y2 = ROWS - 1 - y1;
   snakes = [makeSnake(0, y1), makeSnake(1, y2)];
-  rocks = []; rockBorn.clear();
+  rocks = []; rockBorn.clear(); portals = [];
   apples = [{x:COLS - 5, y:y1}, {x:COLS - 5, y:y2}].slice(0, cfg.apples);
-  while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
+  if (cfg.game === 'portal') placePortals(y1, y2);
+  while (normalApples() < cfg.apples) spawnApple();
+  if (cfg.game === 'poison') movePoison();
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99];
   stats = { rescues:0, teamwork:0, longest:4 };
   particles = []; popups = []; shake = 0;
@@ -360,17 +392,40 @@ function reset() {
 function occupied() {
   const cells = [];
   snakes.forEach(s => s.alive && cells.push(...s.body));
-  return cells.concat(apples, rocks);
+  return cells.concat(apples, rocks, portals);
 }
 
-function spawnApple(gold = false) {
+const normalApples = () => apples.filter(a => !a.gold && !a.poison).length;
+
+// Portal mode: two linked pairs, kept away from the starting rows, the edges and each other
+function placePortals(y1, y2) {
+  for (let tries = 0; tries < 2000 && portals.length < 4; tries++) {
+    const p = { x: 1 + (Math.random() * (COLS - 2) | 0), y: 1 + (Math.random() * (ROWS - 2) | 0) };
+    if (p.y === y1 || p.y === y2 || occupied().some(c => eq(c, p))) continue;
+    if (portals.some(q => Math.abs(q.x - p.x) + Math.abs(q.y - p.y) < 4)) continue;
+    portals.push(p);
+  }
+  if (portals.length < 4) portals = [];
+}
+
+// Poison mode: as many poison apples as real ones, and they all move whenever an apple is eaten
+function movePoison() {
+  apples = apples.filter(a => !a.poison);
+  for (let i = 0; i < cfg.apples; i++) spawnApple('poison');
+}
+
+function spawnApple(kind) {
+  const gold = kind === true || kind === 'gold';
   const occ = occupied();
+  // Poison never lands right next to a snake's head, so you always get a fair chance to dodge it
+  const nearHead = c => kind === 'poison' && snakes.some(s => s.alive && Math.abs(s.body[0].x - c.x) <= 2 && Math.abs(s.body[0].y - c.y) <= 2);
   const free = [];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++)
-    if (!occ.some(c => c.x === x && c.y === y)) free.push({x,y});
+    if (!occ.some(c => c.x === x && c.y === y) && !nearHead({ x, y })) free.push({x,y});
   if (!free.length) return;
   const a = free[Math.random() * free.length | 0];
   if (gold) { a.gold = true; a.ttl = Math.round(GOLD_MS / TICK); a.max = a.ttl; }
+  if (kind === 'poison') a.poison = true;
   apples.push(a);
   if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
 }
@@ -432,8 +487,13 @@ function tick() {
     const was = s.dir;
     if (s.queue.length) s.dir = s.queue.shift();
     s.turned = s.dir !== was;
-    const next = step(s.body[0], s.dir);
+    const next = dest(s.body[0], s.dir);
     s.next = null;
+    const gate = portalAt(step(s.body[0], s.dir));
+    if (gate >= 0) { // whoosh through a portal
+      burst(portals[gate], PORTAL_COLORS[gate >> 1], 10, 2.5); burst(portals[gate ^ 1], PORTAL_COLORS[gate >> 1], 10, 2.5);
+      beep(600, .06, 0, 'sine'); beep(900, .08, .05, 'sine');
+    }
     if (peaceful && !inBounds(next)) { // Peaceful: walls just stop you
       if (!s.blocked) beep(220, .07, 0, 'triangle');
       s.blocked = true;
@@ -453,6 +513,7 @@ function tick() {
     const h = s.body[0];
     return !inBounds(h)
       || rocks.some(r => eq(r, h))
+      || (s.appleIdx >= 0 && apples[s.appleIdx].poison)
       || s.body.some((c, i) => i > 0 && eq(c, h))
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
@@ -510,9 +571,14 @@ function eatApple(s, a) {
 }
 
 function refillAfterEating(count) {
-  while (apples.filter(a => !a.gold).length < cfg.apples) spawnApple();
+  while (normalApples() < cfg.apples) spawnApple();
   if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
   if (cfg.game === 'maze') for (let i = 0; i < count; i++) spawnRock();
+  if (cfg.game === 'poison') movePoison();
+  if (cfg.game === 'speed') {
+    // 4% faster per point, down to a limit
+    TICK = Math.min(TICK, Math.max(55, Math.round(SPEEDS[cfg.speed] * Math.pow(.96, score))));
+  }
 }
 
 // ---------- Turning ----------
@@ -521,8 +587,8 @@ const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.n
 
 // Would moving `dir` next stop or kill snake s? Its head is held back instead of sliding into trouble.
 function aheadBlocked(s, dir) {
-  const b = s.body, next = step(b[0], dir);
-  if (!inBounds(next) || rocks.some(r => eq(r, next))) return true;
+  const b = s.body, next = dest(b[0], dir);
+  if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => a.poison && eq(a, next))) return true;
   if (cfg.game === 'peaceful') return false;
   // A tail is safe to follow, since it moves out of the way on the same step (unless that snake is growing)
   const hits = o => o.body.some((c, i) => eq(c, next) && (o.pending > 0 || i < o.body.length - 1));
@@ -579,7 +645,7 @@ function replayTurn(s, k, dir, other) {
   const log = [];
   let eat = false;
   for (let j = k - 1; j >= 0; j--) {
-    const head = step(body[0], dir);
+    const head = dest(body[0], dir);
     if (!inBounds(head) || rocks.some(c => eq(c, head))) return null;
     body = [head, ...body];
     const tail = recent[j].tail ? body.pop() : null;
@@ -588,7 +654,8 @@ function replayTurn(s, k, dir, other) {
       const ob = others[j];
       if (ob && (ob.some(c => eq(c, head)) || body.some(c => eq(c, ob[0])))) return null;
     }
-    if (apples.some(a => eq(a, head))) { if (j > 0) return null; eat = true; }
+    const apple = apples.find(a => eq(a, head));
+    if (apple) { if (j > 0 || apple.poison) return null; eat = true; }
     log.unshift({ tail, turn: j === k - 1, ate: false, ok: true });
   }
   return { body, log: log.concat(s.log.slice(k)), eat };
@@ -1068,7 +1135,7 @@ setInterval(() => { if (role === 'guest' && connected()) send({ t:'ping', ts: pe
 function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   send({
-    t:'state', n: tickNo, state, cfg, score, apples, rocks, stats, skins, pausedT, ack: hostLastSeq,
+    t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT, ack: hostLastSeq,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves })),
@@ -1150,12 +1217,15 @@ function cleanState(m) {
       pausedT: num(m.pausedT, 0, 1),
       countLeft: num(m.countLeft, 0, 5000),
       ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
-      apples: arr(m.apples, 10).map(a => {
+      apples: arr(m.apples, 16).map(a => {
         const o = cellOf(a);
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
+        else if (a && a.poison === true) o.poison = true;
         return o;
       }),
       rocks: arr(m.rocks, cells).map(cellOf),
+      portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
+      tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
       skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, 2)[i], d)),
       stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells) },
       snakes: list.map((s, id) => {
@@ -1208,6 +1278,7 @@ function applyState(m) {
   const prev = state, now = performance.now();
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
+  portals = m.portals; TICK = m.tk;
   if (JSON.stringify(m.skins) !== JSON.stringify(skins)) { skins = m.skins; applySkins(); }
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
   // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
@@ -1315,18 +1386,45 @@ function drawApple(a, now) {
   }
   ctx.fillStyle = 'rgba(0,0,0,.12)';
   ctx.beginPath(); ctx.ellipse(cx, cy + r * .9, r * .8, r * .25, 0, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = a.gold ? '#f5c518' : '#e7471d';
+  ctx.fillStyle = a.gold ? '#f5c518' : a.poison ? '#3b1352' : '#e7471d';
   ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-  ctx.fillStyle = 'rgba(255,255,255,.4)';
+  ctx.fillStyle = a.poison ? 'rgba(190,255,120,.35)' : 'rgba(255,255,255,.4)';
   ctx.beginPath(); ctx.arc(cx - r * .35, cy - r * .3, r * .22, 0, Math.PI * 2); ctx.fill();
   ctx.strokeStyle = '#6b3e1f'; ctx.lineWidth = CELL * .07; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(cx, cy - r * .8); ctx.lineTo(cx + r * .1, cy - r * 1.3); ctx.stroke();
-  ctx.fillStyle = '#4caf50';
+  ctx.fillStyle = a.poison ? '#7bc043' : '#4caf50';
   ctx.beginPath(); ctx.ellipse(cx + r * .45, cy - r * 1.1, r * .38, r * .18, -.5, 0, Math.PI * 2); ctx.fill();
+  if (a.poison) { // skull, so it can't be mistaken for food
+    ctx.fillStyle = '#d9ffb0'; ctx.font = `${CELL * .36}px "Segoe UI Symbol", "Apple Color Emoji", sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('☠', cx, cy + CELL * .02);
+  }
   if (a.gold) { // timer ring
     ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = CELL * .05;
     ctx.beginPath(); ctx.arc(cx, cy, r * 1.35, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * a.ttl / a.max); ctx.stroke();
   }
+}
+
+// Portals: swirling rings, each pair in its own color
+// (the dark hole goes under the snakes, the spinning ring over them, so a snake looks like it's going in)
+function drawPortals(now, rings) {
+  portals.forEach((p, i) => {
+    const cx = (p.x + .5) * CELL, cy = (p.y + .5) * CELL, color = PORTAL_COLORS[i >> 1];
+    if (!rings) {
+      const g = ctx.createRadialGradient(cx, cy, CELL * .05, cx, cy, CELL * .48);
+      g.addColorStop(0, '#1b1030'); g.addColorStop(.7, color + '99'); g.addColorStop(1, color + '00');
+      ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, CELL * .48, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
+    // dark outline so the ring shows up even on a snake of the same color
+    ctx.strokeStyle = 'rgba(20,10,40,.55)'; ctx.lineWidth = CELL * .15;
+    ctx.beginPath(); ctx.arc(cx, cy, CELL * .44, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = color; ctx.lineWidth = CELL * .08; ctx.lineCap = 'round';
+    const spin = now / 300 * (i % 2 ? -1 : 1);
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath(); ctx.arc(cx, cy, CELL * .44, spin + k * 2.09, spin + k * 2.09 + 1.2); ctx.stroke();
+    }
+  });
 }
 
 const px = p => ({ x: (p.x + .5) * CELL, y: (p.y + .5) * CELL });
@@ -1345,13 +1443,17 @@ function drawSnake(s, t, now) {
   const pts = [toward(b[0], next, tt)];
   const keep = grow || tt === 0 ? n : n - 1;
   for (let i = 0; i < keep; i++) pts.push(b[i]);
-  if (keep < n) pts.push(toward(b[n - 1], b[n - 2] || b[0], tt));
+  if (keep < n) pts.push(toward(b[n - 1], linkNext(b[n - 1], b[n - 2] || b[0]), tt));
 
   // Where the path wraps across an edge, run off that side and back in from the opposite one
   const runs = [[pts[0]]];
   for (let i = 1; i < pts.length; i++) {
     const a = pts[i - 1], c = pts[i];
-    if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) {
+    const gate = Number.isInteger(a.x) && Number.isInteger(a.y) ? portalAt(a) : -1;
+    if (gate >= 0 && Math.hypot(a.x - c.x, a.y - c.y) > 1.01 && !(Number.isInteger(c.x) && touching(a, c))) {
+      // Went through a portal: this part of the body starts at the entrance portal instead
+      runs.push([portals[gate ^ 1]]);
+    } else if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) {
       const w = toward(a, c, 1), dx = w.x - a.x, dy = w.y - a.y;
       runs[runs.length - 1].push({ x: a.x + dx, y: a.y + dy });
       runs.push([{ x: c.x - dx, y: c.y - dy }]);
@@ -1396,7 +1498,7 @@ function drawSnake(s, t, now) {
   } else if (pattern !== 'classic') {
     const base = skinHex(s.id);
     for (let i = 1; i < keep; i++) {
-      const c = px(b[i]), f = toward(b[i], b[i - 1], 1);
+      const c = px(b[i]), f = toward(b[i], linkNext(b[i], b[i - 1]), 1);
       const ux = f.x - b[i].x, uy = f.y - b[i].y, perpX = -uy * CELL, perpY = ux * CELL;
       const even = ((s.moves - i) & 1) === 0;
       if (pattern === 'stripes') {
@@ -1415,7 +1517,7 @@ function drawSnake(s, t, now) {
   const ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
   // Mouth opens when an apple is right ahead, like Google's snake
   let near = false;
-  if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => eq(a, p)); }
+  if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => !a.poison && eq(a, p)); }
   L.mouth += ((near ? 1 : 0) - L.mouth) * Math.min(1, .3 * frameK);
   // Eyes, with the occasional blink
   if (!L.blinkAt || now > L.blinkAt + 150) L.blinkAt = now + rand(2200, 5200);
@@ -1551,9 +1653,11 @@ function frame(now) {
   if (shake > .02) { ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10); shake *= Math.pow(.88, frameK); }
   drawBoard();
   rocks.forEach(r => drawRock(r, now));
+  drawPortals(now);
   apples.forEach(a => drawApple(a, now));
   snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t, now));
   snakes.filter(s => s.alive).forEach(s => drawSnake(s, t, now));
+  drawPortals(now, true);
   snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * frameK); });
   drawEffects(frameK);
   drawEmotes(now);
