@@ -175,7 +175,7 @@
           <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></label>
           <label title="Speed"><span>⚡</span><select data-key="speed" aria-label="Speed"><option value="slow">🐢 Slow</option><option value="normal">🐇 Normal</option><option value="fast">⚡ Fast</option></select></label>
           <label title="Board size"><span>▦</span><select data-key="board" aria-label="Board size"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
-          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="blender">Blender</option></select></label>
+          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="blender">Blender</option></select></label>
           <label title="Edges"><span>🧱</span><select data-key="mode" aria-label="Edges"><option value="walls">Walls</option><option value="wrap">Wrap around</option></select></label>
           <label title="How to play"><span>👥</span><select data-key="play" aria-label="How to play"><option value="coop">Co-op</option><option value="challenge">Challenges</option><option value="versus">Versus</option></select></label>
         </div>
@@ -219,12 +219,16 @@ const GAMES = {
   statue: 'Every apple you eat leaves a stone statue of your snake behind (your old statue crumbles). Don\'t crash into them!',
   reverse: 'Every apple you eat flips your snake around: your tail becomes your head!',
   key: 'Apples are locked in cages. Grab the 🔑 key to unlock them — cages are solid until then.',
+  light: "Lights out! You can only see what's near the snakes' heads. Apples glow a little.",
+  shield: 'Grab a 🛡 shield to survive your next crash — you turn see-through for a moment and slip free.',
+  magnet: 'Your head is a magnet: apples close to you slide toward your mouth.',
   blender: 'A random mode every round — keep on your toes!',
 };
 const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison:'Poison', portal:'Portal', speed:'Speed-up',
-  statue:'Statue', reverse:'Reverse', key:'Key', blender:'Blender' };
+  statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', blender:'Blender' };
 // Blender picks one of these each round
-const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key'];
+const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet'];
+const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
 let G = 'classic'; // the mode actually being played this round (differs from cfg.game in Blender)
 // How you play: endless co-op, timed team challenges, or everyone for themselves
 const PLAYS = {
@@ -429,6 +433,9 @@ function baseHint() {
   if (G === 'statue') return 'Shared score · Eating leaves a statue of your snake — steer around them';
   if (G === 'reverse') return 'Shared score · Eating flips your snake around — watch where your tail is!';
   if (G === 'key') return 'Shared score · Grab the 🔑 to open the cages, then eat the apples';
+  if (G === 'light') return "Shared score · It's dark — stay close and keep your eyes open";
+  if (G === 'shield') return 'Shared score · A 🛡 shield saves you from one crash';
+  if (G === 'magnet') return 'Shared score · Apples near your head get pulled in';
   if (G === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
@@ -474,7 +481,7 @@ const snakeOf = id => snakes.find(s => s.id === id);
 
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
-  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0 };
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0, shield:false, safe:0 };
 }
 
 function reset() {
@@ -492,6 +499,7 @@ function reset() {
   if (G === 'poison') movePoison();
   statues = [];
   if (G === 'key') { apples.forEach(a => { a.locked = true; }); ensureKey(); }
+  if (G === 'shield') spawnApple('shield');
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99]; elapsed = 0;
   stats = { rescues:0, teamwork:0, longest:4, eaten:0, golds:0, safeMs:0, ch:0 };
   particles = []; popups = []; waves = []; shake = 0;
@@ -515,7 +523,25 @@ function occupied() {
   return cells.concat(apples, rocks, portals, statues);
 }
 
-const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key).length;
+const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield).length;
+
+// Magnet mode: every other move, apples near a head slide one square toward the closest one
+function pullApples() {
+  const heads = snakes.filter(s => s.alive).map(s => s.body[0]);
+  for (const a of apples) {
+    if (a.poison || a.locked) continue;
+    let best = null, bd = MAGNET_RANGE + 1;
+    for (const h of heads) { const d = Math.abs(h.x - a.x) + Math.abs(h.y - a.y); if (d < bd) { bd = d; best = h; } }
+    if (!best || bd <= 1) continue;
+    const dx = Math.sign(best.x - a.x), dy = Math.sign(best.y - a.y);
+    const tries = Math.abs(best.x - a.x) >= Math.abs(best.y - a.y) ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]];
+    const occ = occupied();
+    for (const [mx, my] of tries) {
+      const p = { x: a.x + mx, y: a.y + my };
+      if ((mx || my) && inBounds(p) && !occ.some(c => eq(c, p))) { a.x = p.x; a.y = p.y; break; }
+    }
+  }
+}
 
 // Key mode: whenever an apple is caged, there's a key somewhere to open it
 function ensureKey() {
@@ -579,6 +605,7 @@ function spawnApple(kind) {
   if (gold) { a.gold = true; a.ttl = Math.round(GOLD_MS / TICK); a.max = a.ttl; }
   if (kind === 'poison') a.poison = true;
   if (kind === 'key') a.key = true;
+  else if (kind === 'shield') a.shield = true;
   else if (!kind && G === 'key') a.locked = true;
   apples.push(a);
   if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
@@ -615,7 +642,7 @@ function respawnSnake(s) {
     const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
     const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
     if (body.every(isFree) && ahead.every(isFree)) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0 });
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0 });
       burst(body[0], skinHex(s.id), 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
@@ -630,7 +657,7 @@ function tick() {
   tickNo++;
   elapsed += TICK;
   const peaceful = G === 'peaceful';
-  snakes.forEach(s => { s.fresh = false; s.ateNow = false; s.flipped = false; });
+  snakes.forEach(s => { s.fresh = false; s.ateNow = false; s.flipped = false; if (s.safe > 0) s.safe--; });
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
 
   apples.forEach(a => { if (a.gold) a.ttl--; });
@@ -649,7 +676,7 @@ function tick() {
       burst(portals[gate], PORTAL_COLORS[gate >> 1], 10, 2.5); burst(portals[gate ^ 1], PORTAL_COLORS[gate >> 1], 10, 2.5);
       beep(600, .06, 0, 'sine'); beep(900, .08, .05, 'sine');
     }
-    if (peaceful && !inBounds(next)) { // Peaceful: walls just stop you
+    if ((peaceful || s.safe > 0) && !inBounds(next)) { // Peaceful (or a snake that just used its shield): walls just stop you
       if (!s.blocked) beep(220, .07, 0, 'triangle');
       s.blocked = true;
       continue;
@@ -664,7 +691,7 @@ function tick() {
     s.body.unshift(s.next); s.moves++;
     if (s.pending > 0) { s.pending--; s.popped = null; } else s.popped = s.body.pop();
   }
-  const dying = peaceful ? [] : movers.filter(s => {
+  const crashed = peaceful ? [] : movers.filter(s => {
     const h = s.body[0];
     return !inBounds(h)
       || rocks.some(r => eq(r, h))
@@ -672,6 +699,17 @@ function tick() {
       || s.body.some((c, i) => i > 0 && eq(c, h))
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
+  // Shield mode: a shield takes the hit, then the snake is see-through for a moment so it can slip free
+  for (const s of crashed) {
+    if (s.safe > 0 || !s.shield) continue;
+    s.shield = false; s.safe = Math.round(SHIELD_SAFE_MS / TICK);
+    // the crashing move doesn't happen (so it never ends up off the board)
+    s.body = s.oldBody; s.pending = s.oldPending; s.next = null; s.appleIdx = -1;
+    burst(s.body[0], '#7fd4ff', 18, 3.5);
+    popup(s.body[0], 'Shield!', '#bfe9ff');
+    beep(520, .08, 0, 'triangle'); beep(330, .14, .07, 'triangle');
+  }
+  const dying = crashed.filter(s => !(s.safe > 0));
   if (cfg.play === 'versus') for (const s of dying) {
     // Versus: whoever you crashed into gets a bonus (unless they crashed too)
     const h = s.body[0], by = live.find(o => o !== s && !dying.includes(o) && o.body.some(c => eq(c, h)));
@@ -693,6 +731,7 @@ function tick() {
   const eaten = new Set();
   for (const s of movers) {
     if (!s.alive || s.appleIdx < 0 || eaten.has(s.appleIdx)) continue;
+    if (apples[s.appleIdx].poison || apples[s.appleIdx].locked) continue; // (a shielded snake can pass over these)
     eaten.add(s.appleIdx); s.ateNow = true;
     eatApple(s, apples[s.appleIdx]);
   }
@@ -702,13 +741,14 @@ function tick() {
   }
   // Remember each snake's last few moves, so a late key press from an online friend can still count
   for (const s of live) {
-    if (!s.alive || s.fresh || s.flipped) { s.log = []; continue; }
+    if (!s.alive || s.fresh || s.flipped || s.safe > 0) { s.log = []; continue; }
     s.log.unshift(s.next ? { tail:s.popped, turn:s.turned, ate:s.ateNow, ok:!dying.length }
                          : { tail:null, turn:false, ate:false, ok:false });
     if (s.log.length > maxRewind()) s.log.length = maxRewind();
   }
   stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
   if (statues.length) settleStatues();
+  if (G === 'magnet' && tickNo % 2 === 0) pullApples();
   if (cfg.play === 'challenge') {
     const had = starsOf(stats.ch);
     stats.ch = Math.max(stats.ch, CHALLENGES[challenge].val());
@@ -727,6 +767,13 @@ function tick() {
 }
 
 function eatApple(s, a) {
+  if (a.shield) { // Shield mode: protects you from your next crash
+    s.shield = true; s.eatFx = 1;
+    burst(a, '#7fd4ff', 14, 3);
+    popup(a, '+Shield', '#bfe9ff');
+    beep(660, .06, 0, 'sine'); beep(880, .08, .06, 'sine'); beep(1320, .1, .12, 'sine');
+    return;
+  }
   if (a.key) { // Key mode: open every cage
     apples.forEach(o => { if (o.locked) { o.locked = false; burst(o, '#ffd54a', 10, 2.5); } });
     burst(a, '#ffd54a', 14, 3);
@@ -765,6 +812,8 @@ function refillAfterEating(count) {
   if (G === 'maze') for (let i = 0; i < count; i++) spawnRock();
   if (G === 'poison') movePoison();
   if (G === 'key') ensureKey();
+  // Shield mode: a new shield shows up every few apples (only one on the board at a time)
+  if (G === 'shield' && stats.eaten % SHIELD_EVERY === 0 && !apples.some(a => a.shield)) spawnApple('shield');
   if (G === 'speed') {
     // 4% faster per point, down to a limit
     TICK = Math.min(TICK, Math.max(55, Math.round(SPEEDS[cfg.speed] * Math.pow(.96, score))));
@@ -778,6 +827,7 @@ const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.n
 // Would moving `dir` next stop or kill snake s? Its head is held back instead of sliding into trouble.
 function aheadBlocked(s, dir) {
   const b = s.body, next = dest(b[0], dir);
+  if (s.safe > 0) return !inBounds(next); // see-through after a shield: only walls stop it
   if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => (a.poison || a.locked) && eq(a, next))) return true;
   if (G === 'peaceful') return false;
   // A tail is safe to follow, since it moves out of the way on the same step (unless that snake is growing)
@@ -1459,7 +1509,8 @@ function sendState() {
     ch: challenge, goal, el: elapsed, g: G, statues,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
-      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone })),
+      apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone,
+      shield:!!s.shield, safe:s.safe || 0 })),
     fx: outFx,
   };
   // Each friend also hears which player they are and which of their key presses have arrived
@@ -1556,6 +1607,7 @@ function cleanState(m) {
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
         else if (a && a.poison === true) o.poison = true;
         else if (a && a.key === true) o.key = true;
+        else if (a && a.shield === true) o.shield = true;
         else if (a && a.locked === true) o.locked = true;
         return o;
       }),
@@ -1576,6 +1628,7 @@ function cleanState(m) {
           id: s.id, body, gone: s.gone === true, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
           pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1), moves: int(s.moves, 0, 1e9),
+          shield: s.shield === true, safe: int(s.safe, 0, 100),
           log: arr(s.log, 8).map(r => r && typeof r === 'object'
             ? { tail: r.tail ? cellOf(r.tail) : null, turn: r.turn === true, ate: r.ate === true, ok: r.ok === true }
             : { tail: null, turn: false, ate: false, ok: false }),
@@ -1761,7 +1814,8 @@ function drawRock(r, now) {
 // Apples pop in when they appear and bob gently; golden ones sparkle
 function drawApple(a, now) {
   const key = a.x + ',' + a.y + (a.poison ? 'p' : a.gold ? 'g' : a.key ? 'k' : '');
-  if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, now); }
+  // (in Magnet mode apples move around all the time, so they don't pop in again at every step)
+  if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, G === 'magnet' && !a.gold ? now - 1e4 : now); }
   const t = Math.min(1, (now - appleBorn.get(key)) / 320), u = t - 1;
   const pop = 1 + 2.7 * u * u * u + 1.7 * u * u;
   if (pop <= 0) return;
@@ -1787,6 +1841,7 @@ function drawAppleShape(a, now) {
   if (a.gold && a.ttl < 16 && Math.floor(now / 110) % 2) return; // blink before vanishing
   const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
   if (a.key) return drawKey(cx, (a.y + .5) * CELL, now);
+  if (a.shield) return drawShield(cx, (a.y + .5) * CELL, CELL * .34, now);
   if (a.locked) { // the apple, inside a cage
     drawAppleShape({ x:a.x, y:a.y }, now);
     const x = a.x * CELL + CELL * .08, y = a.y * CELL + CELL * .08, w = CELL * .84;
@@ -1825,6 +1880,24 @@ function drawAppleShape(a, now) {
     ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = CELL * .05;
     ctx.beginPath(); ctx.arc(cx, cy, r * 1.35, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * a.ttl / a.max); ctx.stroke();
   }
+}
+
+// A glowing blue shield badge
+function drawShield(cx, cy, r, now) {
+  const g = ctx.createRadialGradient(cx, cy, r * .3, cx, cy, r * 1.7);
+  g.addColorStop(0, 'rgba(127,212,255,.6)'); g.addColorStop(1, 'rgba(127,212,255,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r * 1.7, 0, Math.PI * 2); ctx.fill();
+  const y = cy + Math.sin(now / 300) * r * .06;
+  ctx.beginPath();
+  ctx.moveTo(cx, y - r);
+  ctx.quadraticCurveTo(cx + r * .55, y - r * .7, cx + r * .9, y - r * .75);
+  ctx.quadraticCurveTo(cx + r * .9, y + r * .45, cx, y + r * 1.05);
+  ctx.quadraticCurveTo(cx - r * .9, y + r * .45, cx - r * .9, y - r * .75);
+  ctx.quadraticCurveTo(cx - r * .55, y - r * .7, cx, y - r);
+  ctx.fillStyle = '#2f8fe0'; ctx.fill();
+  ctx.lineWidth = r * .16; ctx.strokeStyle = '#d8f1ff'; ctx.stroke();
+  ctx.fillStyle = 'rgba(255,255,255,.45)';
+  ctx.beginPath(); ctx.ellipse(cx - r * .3, y - r * .3, r * .18, r * .38, .3, 0, Math.PI * 2); ctx.fill();
 }
 
 // A golden key that slowly swings
@@ -1915,6 +1988,7 @@ function drawSnake(s, t, now) {
   if (!s.alive) ctx.globalAlpha = .45 + .15 * Math.sin(now / 120);
   const sinceSpawn = now - (L.spawnAt || -1e9), sinceDeath = now - (L.dieAt || -1e9);
   if (s.alive && sinceSpawn < 450) ctx.globalAlpha = .2 + .8 * sinceSpawn / 450; // fades in when it appears
+  if (s.alive && s.safe > 0) ctx.globalAlpha = .45 + .2 * Math.sin(now / 60); // see-through after using a shield
   // Each body square keeps its own number (from when the head made it), so patterns stay put on the body
   const pattern = s.alive ? skins[s.id].p : 'classic';
   const hue = id => `hsl(${(id * 22 % 360 + 360) % 360}, 85%, 58%)`;
@@ -2039,6 +2113,12 @@ function drawSnake(s, t, now) {
     }
   }
   const h = px(pts[0]);
+  if (s.alive && s.shield) { // a shimmering bubble around a shielded head
+    ctx.globalAlpha = .55 + .2 * Math.sin(now / 200);
+    ctx.strokeStyle = '#9fe0ff'; ctx.lineWidth = CELL * .07;
+    ctx.beginPath(); ctx.arc(h.x, h.y, CELL * .62, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
   if (state === 'ready' || state === 'countdown') {
     ctx.fillStyle = '#fff'; ctx.font = `bold ${CELL * .4}px Roboto, Arial`; ctx.textAlign = 'center';
     ctx.fillText(playerName(s.id), h.x, h.y - CELL * .65);
@@ -2169,6 +2249,29 @@ try {
   worker.onmessage = () => update();
 } catch (e) {}
 
+// Light mode: darkness over the board, with a pool of light around each head and a faint glow on apples
+const darkCv = document.createElement('canvas'), dctx = darkCv.getContext('2d');
+function drawDark(now) {
+  const W = COLS * CELL, H = ROWS * CELL;
+  if (darkCv.width !== canvas.width || darkCv.height !== canvas.height) { darkCv.width = canvas.width; darkCv.height = canvas.height; }
+  dctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  dctx.globalCompositeOperation = 'source-over';
+  dctx.clearRect(0, 0, W, H);
+  dctx.fillStyle = 'rgba(8,14,24,.93)'; dctx.fillRect(0, 0, W, H);
+  dctx.globalCompositeOperation = 'destination-out';
+  const hole = (x, y, r, a) => {
+    const g = dctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(0,0,0,${a})`); g.addColorStop(.55, `rgba(0,0,0,${a * .85})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+    dctx.fillStyle = g; dctx.beginPath(); dctx.arc(x, y, r, 0, Math.PI * 2); dctx.fill();
+  };
+  for (const s of snakes) {
+    const L = looks[s.id];
+    hole(L.hx, L.hy, CELL * (s.alive ? 3.3 + .1 * Math.sin(now / 400 + s.id) : 1.2), s.alive ? 1 : .5);
+  }
+  for (const a of apples) if (!a.poison) hole((a.x + .5) * CELL, (a.y + .5) * CELL, CELL * .8, .55);
+  ctx.drawImage(darkCv, 0, 0, W, H);
+}
+
 let lastFrame = performance.now();
 function frame(now) {
   frameK = Math.min(3, (now - lastFrame) / 16.67); lastFrame = now;
@@ -2196,6 +2299,7 @@ function frame(now) {
   drawPortals(now, true);
   snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * frameK); });
   drawEffects(frameK);
+  if (G === 'light') drawDark(now);
   drawEmotes(now);
   ctx.restore();
   if (state === 'countdown') drawCountdown(now);
