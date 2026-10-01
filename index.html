@@ -90,6 +90,11 @@
   .stats { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:10px; }
   .stats span { background:rgba(0,0,0,.3); padding:4px 10px; border-radius:999px; font-size:13px; }
   .small { font-size:12px !important; opacity:.75; }
+  .stars { color:#ffe680; letter-spacing:1px; }
+  .hud .low { color:#ffd0c8; }
+  .rank { display:flex; gap:8px 14px; flex-wrap:wrap; justify-content:center; font-size:16px; margin:4px 0; }
+  .rank span { display:flex; align-items:center; gap:5px; }
+  .targets { font-size:13px; opacity:.9; }
   .emotes { display:flex; justify-content:center; gap:10px; margin-top:8px; }
   .emotes button {
     font-size:22px; line-height:1; background:rgba(255,255,255,.08); border:0; border-radius:10px;
@@ -121,8 +126,10 @@
 <body>
 <div class="wrap" id="wrap">
   <div class="hud" id="hud">
-    <div class="item" title="Team score">🍎 <span id="score">0</span></div>
-    <div class="item" title="Best score">🏆 <span id="best">0</span></div>
+    <div class="item" id="scoreItem" title="Team score">🍎 <span id="score">0</span></div>
+    <div class="item" id="bestItem" title="Best score">🏆 <span id="best">0</span></div>
+    <div class="item" id="goalItem" title="Challenge progress" hidden><span id="goal"></span></div>
+    <div class="item" id="timeItem" title="Time left" hidden>⏱ <span id="time">0:00</span></div>
     <div class="spacer"></div>
     <div class="pl" id="pl1"><span class="dot" style="background:var(--p1)"></span><span id="pn1">P1</span> <span id="p1">0</span></div>
     <div class="pl" id="pl2"><span class="dot" style="background:var(--p2)"></span><span id="pn2">P2</span> <span id="p2">0</span></div>
@@ -158,6 +165,8 @@
         <button class="btn2 menu-only" id="skinBtn">🎨 Snake looks</button>
         <div class="skins menu-only" id="skinPanel" hidden></div>
         <div class="settings menu-only" id="settings">
+          <span>Play</span>
+          <div class="seg" data-key="play"><button data-v="coop">Co-op</button><button data-v="challenge">Challenges</button><button data-v="versus">Versus</button></div>
           <span>Mode</span>
           <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button></div>
           <span>Speed</span>
@@ -198,6 +207,22 @@ const GAMES = {
   poison: 'Dark ☠ apples are poison: eating one knocks you out. They jump to new spots whenever an apple is eaten.',
   portal: 'Two pairs of portals: go into one and you pop out of its twin, still heading the same way.',
   speed: 'Every point the team scores makes both snakes a little faster. How far can you push it?',
+};
+// How you play: endless co-op, timed team challenges, or everyone for themselves
+const PLAYS = {
+  coop: '',
+  challenge: 'Challenges: each round gives your team a random goal and a time limit. Hit the targets for up to 3 ★!',
+  versus: 'Versus: every snake for itself! Most apples when the 1:30 runs out wins. Crashing shrinks you back to 3.',
+};
+const VERSUS_MS = 90000, CUT_BONUS = 2;
+// Team challenges. `stars` are the targets for 1, 2 and 3 stars; `scale` ones get bigger with more players and faster speeds.
+const CHALLENGES = {
+  apples:   { icon:'🍎', name:'Apple feast', desc:'Eat as many apples as you can!', secs:60, stars:[10,18,26], scale:true, val:() => stats.eaten },
+  points:   { icon:'💯', name:'Point rush', desc:'Score points — golden apples and teamwork bonuses count extra!', secs:60, stars:[14,24,34], scale:true, val:() => score },
+  long:     { icon:'📏', name:'Grow together', desc:'Make every snake long — the shortest one counts!', secs:75, stars:[8,12,16], val:() => Math.min(...snakes.filter(s => !s.gone).map(s => s.body.length)) },
+  teamwork: { icon:'🤝', name:'In sync', desc:'Eat within a moment of a teammate for 🤝 teamwork bonuses!', secs:60, stars:[2,4,6], val:() => stats.teamwork },
+  gold:     { icon:'✨', name:'Gold rush', desc:'Golden apples come much more often — grab them before they vanish!', secs:60, stars:[2,4,6], val:() => stats.golds },
+  safe:     { icon:'🛡', name:'Steady hands', desc:'Nobody crash! Your longest crash-free stretch counts.', secs:60, stars:[20,40,60], unit:'s', val:() => Math.floor(stats.safeMs / 1000) },
 };
 const CELL = 40, LIGHT = '#aad751', DARK = '#a2d149';
 const DIRS = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} };
@@ -245,7 +270,7 @@ const int = (v, lo, hi) => Math.round(num(v, lo, hi));
 const arr = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
 const isIdx = (v, len) => Number.isInteger(v) && v >= 0 && v < len;
 
-const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls', game:'classic' };
+const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls', game:'classic', play:'coop' };
 // Only ever accept known setting values (from storage or from an online host)
 function validCfg(c) {
   c = c && typeof c === 'object' ? c : {};
@@ -255,6 +280,7 @@ function validCfg(c) {
     board: has(BOARDS, c.board) ? c.board : DEFAULT_CFG.board,
     mode: c.mode === 'wrap' ? 'wrap' : 'walls',
     game: has(GAMES, c.game) ? c.game : DEFAULT_CFG.game,
+    play: has(PLAYS, c.play) ? c.play : DEFAULT_CFG.play,
   };
 }
 function loadCfg() {
@@ -270,7 +296,8 @@ const $ = id => document.getElementById(id);
 const overlay = $('overlay');
 
 let snakes, apples, rocks = [], score, best = 0, bestAtStart = 0, goldCounter = 0, tickNo = 0;
-let stats = { rescues:0, teamwork:0, longest:0 }, lastEat = [-99, -99];
+let stats = { rescues:0, teamwork:0, longest:0, eaten:0, golds:0, safeMs:0, ch:0 }, lastEat = [-99, -99];
+let challenge = 'apples', goal = [1, 2, 3], elapsed = 0; // elapsed = game time in ms
 let state = 'ready', lastTick = 0, pausedT = 0, countEnd = 0, lastCount = 0, overAt = 0;
 let particles = [], popups = [], waves = [], shake = 0, frameK = 1;
 const appleBorn = new Map(); // when each apple first appeared, for its pop-in
@@ -365,7 +392,14 @@ function toward(a, b, t) {
   return { x: a.x + dx * t, y: a.y + dy * t };
 }
 
+const clock = secs => `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+const timeLimit = () => cfg.play === 'versus' ? VERSUS_MS : cfg.play === 'challenge' ? CHALLENGES[challenge].secs * 1000 : 0;
+const starsOf = v => goal.filter(g => v >= g).length;
+const starText = n => '★'.repeat(n) + '☆'.repeat(3 - n);
+
 function hintText() {
+  if (cfg.play === 'versus') return `Versus · Most apples when time runs out wins · Make others crash into you for +${CUT_BONUS}`;
+  if (cfg.play === 'challenge') { const c = CHALLENGES[challenge]; return `Challenge · ${c.icon} ${c.name}: ${c.desc}`; }
   if (cfg.game === 'peaceful') return 'Shared score · Peaceful mode: nobody can crash — pause to end the game';
   if (cfg.game === 'poison') return 'Shared score · Skip the dark ☠ apples — they knock you out';
   if (cfg.game === 'portal') return 'Shared score · Portals connect in matching colors — use them to cross the board';
@@ -384,7 +418,12 @@ function applyConfig() {
   document.querySelectorAll('.seg[data-key]').forEach(seg => {
     seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(cfg[seg.dataset.key])));
   });
-  $('modeDesc').textContent = GAMES[cfg.game];
+  // (Classic's "game over if you're both down" doesn't apply in versus)
+  $('modeDesc').textContent = cfg.play === 'versus' && cfg.game === 'classic' ? PLAYS.versus
+    : [PLAYS[cfg.play], GAMES[cfg.game]].filter(Boolean).join(' ');
+  $('scoreItem').hidden = $('bestItem').hidden = cfg.play !== 'coop';
+  $('timeItem').hidden = cfg.play === 'coop';
+  $('goalItem').hidden = cfg.play !== 'challenge';
   $('hint').textContent = hintText();
   try { best = +localStorage.getItem(bestKey()) || 0; } catch (e) { best = 0; }
   $('best').textContent = best;
@@ -427,10 +466,21 @@ function reset() {
   if (cfg.game === 'portal') placePortals(rows);
   while (normalApples() < cfg.apples) spawnApple();
   if (cfg.game === 'poison') movePoison();
-  score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99];
-  stats = { rescues:0, teamwork:0, longest:4 };
+  score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99]; elapsed = 0;
+  stats = { rescues:0, teamwork:0, longest:4, eaten:0, golds:0, safeMs:0, ch:0 };
   particles = []; popups = []; waves = []; shake = 0;
+  if (cfg.play === 'challenge' && role !== 'guest') pickChallenge();
+  $('hint').textContent = hintText();
   updateHud();
+}
+
+// A new random challenge (not the same as last time), with targets to suit the team
+function pickChallenge() {
+  const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && cfg.game === 'peaceful'));
+  challenge = ids[Math.random() * ids.length | 0];
+  const c = CHALLENGES[challenge], n = snakes.length;
+  const f = c.scale ? (1 + .3 * (n - 2)) * Math.sqrt(SPEEDS.normal / SPEEDS[cfg.speed]) * (cfg.apples === 1 ? .8 : 1) : 1;
+  goal = c.stars.map(v => Math.max(1, Math.round(v * f)));
 }
 
 function occupied() {
@@ -518,6 +568,7 @@ function respawnSnake(s) {
 function tick() {
   recording = true;
   tickNo++;
+  elapsed += TICK;
   const peaceful = cfg.game === 'peaceful';
   snakes.forEach(s => { s.fresh = false; s.ateNow = false; });
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
@@ -561,6 +612,16 @@ function tick() {
       || s.body.some((c, i) => i > 0 && eq(c, h))
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
+  if (cfg.play === 'versus') for (const s of dying) {
+    // Versus: whoever you crashed into gets a bonus (unless they crashed too)
+    const h = s.body[0], by = live.find(o => o !== s && !dying.includes(o) && o.body.some(c => eq(c, h)));
+    if (by) {
+      by.apples += CUT_BONUS; score += CUT_BONUS;
+      popup(by.body[0], 'Cut off +' + CUT_BONUS, '#ffe680');
+      beep(1320, .08, .1, 'triangle');
+    }
+  }
+  stats.safeMs = dying.length ? 0 : stats.safeMs + TICK;
   for (const s of dying) {
     s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = []; s.log = [];
     s.respawn = RESPAWN_TICKS;
@@ -587,9 +648,19 @@ function tick() {
     if (s.log.length > maxRewind()) s.log.length = maxRewind();
   }
   stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
+  if (cfg.play === 'challenge') {
+    const had = starsOf(stats.ch);
+    stats.ch = Math.max(stats.ch, CHALLENGES[challenge].val());
+    if (starsOf(stats.ch) > had) { // earned a star
+      popup({ x: COLS / 2 - .5, y: ROWS / 2 - .5 }, '★'.repeat(starsOf(stats.ch)) + '!', '#ffe680');
+      beep(988, .08); beep(1319, .08, .08); beep(1760, .14, .16);
+    }
+  }
   recording = false;
 
-  if (!snakes.some(s => s.alive)) gameOver();
+  const limit = timeLimit();
+  if ((cfg.play !== 'versus' && !snakes.some(s => s.alive)) || (limit && elapsed >= limit)
+      || (cfg.play === 'challenge' && starsOf(stats.ch) === 3)) gameOver();
   updateHud();
   sendState();
 }
@@ -597,10 +668,12 @@ function tick() {
 function eatApple(s, a) {
   const pts = a.gold ? GOLD_POINTS : 1;
   s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
+  stats.eaten++; if (a.gold) stats.golds++;
   burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
   popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
   if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
-  else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= GOLD_EVERY) goldCounter = -1; }
+  else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= (cfg.play === 'challenge' && challenge === 'gold' ? 2 : GOLD_EVERY)) goldCounter = -1; }
+  if (cfg.play === 'versus') return; // no teamwork bonus or rescues against each other
   // Teamwork bonus: you and a teammate eat within a moment of each other
   if (snakes.some(o => o !== s && tickNo - (lastEat[o.id] ?? -99) <= Math.round(TEAM_MS / TICK))) {
     score += TEAM_BONUS; stats.teamwork++; lastEat = [];
@@ -752,7 +825,19 @@ function updateHud() {
   // Someone who joins in the middle of a round watches until the next one
   const mine = snakeOf(mySlot);
   if (role === 'guest') $('hint').textContent = (!mine || mine.gone) && state !== 'ready' ? "👀 Watching — you'll join at the next round" : hintText();
-  if (score > best) {
+  const limit = timeLimit();
+  if (limit) {
+    const left = Math.max(0, Math.ceil((limit - elapsed) / 1000));
+    $('time').textContent = clock(left);
+    $('time').classList.toggle('low', left <= 10);
+    if (left <= 5 && left > 0 && left !== shown.time && state === 'playing') beep(880, .05, 0, 'sine');
+    shown.time = left;
+  }
+  if (cfg.play === 'challenge') {
+    const c = CHALLENGES[challenge], st = starsOf(stats.ch);
+    $('goal').innerHTML = `${c.icon} ${stats.ch}/${goal[Math.min(2, st)]}${c.unit || ''} <span class="stars">${starText(st)}</span>`;
+  }
+  if (cfg.play === 'coop' && score > best) {
     best = score; $('best').textContent = best;
     try { localStorage.setItem(bestKey(), best); } catch (e) {}
   }
@@ -783,18 +868,58 @@ function showOverlay(title, html, button, paused) {
   renderMenu();
 }
 
-function showIntro() { showOverlay('Co-op Snake', INTRO, role === 'guest' ? 'Start' : 'Play'); }
+function introText() {
+  if (cfg.play === 'versus') return `Every snake for itself! Most apples after ${clock(VERSUS_MS / 1000)} wins.<br>
+    Crash and you shrink back to 3 and sit out for 3s.<br>Get someone to crash into you for +${CUT_BONUS}!`;
+  if (cfg.play === 'challenge') return `Team up to beat a random challenge before time runs out.<br>
+    Every round is a new goal — hit the targets for up to 3 ★!`;
+  return INTRO;
+}
+function showIntro() { showOverlay(cfg.play === 'versus' ? 'Versus Snake' : 'Co-op Snake', introText(), role === 'guest' ? 'Start' : 'Play'); }
+
+const fanfare = () => { confetti(); beep(784, .1); beep(988, .1, .1); beep(1319, .2, .2); };
+const dotOf = id => `<span class="dot" style="background:${skinHex(id)}"></span>`;
 
 function showGameOver() {
+  const time = clock(Math.round(elapsed / 1000));
+  if (cfg.play === 'versus') return showVersusOver(time);
+  if (cfg.play === 'challenge') return showChallengeOver(time);
   const isBest = score > 0 && score > bestAtStart;
-  if (isBest) { confetti(); beep(784, .1); beep(988, .1, .1); beep(1319, .2, .2); }
-  const secs = Math.round(tickNo * TICK / 1000);
-  const time = `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+  if (isBest) fanfare();
   showOverlay(isBest ? 'New best! 🏆' : cfg.game === 'peaceful' ? 'Well played!' : 'Game over',
     `You scored <b>${score}</b> together!<br>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
      <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
     'Play again');
+}
+
+function showVersusOver(time) {
+  const ranked = snakes.slice().sort((p, q) => q.apples - p.apples);
+  const top = ranked[0].apples, winners = ranked.filter(s => s.apples === top);
+  const tie = winners.length > 1, w = winners[0].id;
+  if (!tie && (role === 'local' || w === me())) fanfare();
+  else if (!tie) { beep(392, .15); beep(330, .25, .15); }
+  const medal = s => ['🥇', '🥈', '🥉', '🎗'][ranked.findIndex(o => o.apples === s.apples)];
+  showOverlay(tie ? "It's a tie!" : role !== 'local' && w === me() ? 'You win! 🏆' : `${playerName(w)} wins! 🏆`,
+    `<span class="rank">${ranked.map(s => `<span>${medal(s)} ${dotOf(s.id)} ${playerName(s.id)} <b>${s.apples}</b></span>`).join('')}</span>
+     <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span></span>`,
+    'Rematch');
+}
+
+function showChallengeOver(time) {
+  const c = CHALLENGES[challenge], st = starsOf(stats.ch), key = 'coopSnakeStars:' + challenge;
+  let prev = 0;
+  try { prev = +localStorage.getItem(key) || 0; } catch (e) {}
+  if (st > prev) try { localStorage.setItem(key, st); } catch (e) {}
+  if (st === 3 || st > prev) fanfare();
+  showOverlay(['Challenge failed', 'Nice! ★', 'Great! ★★', 'Perfect! ★★★'][st],
+    `${c.icon} <b>${c.name}</b> — you got <b>${stats.ch}${c.unit || ''}</b><br>
+     <span class="stars" style="font-size:30px">${starText(st)}</span><br>
+     <span class="targets">Targets: ★ ${goal[0]} · ★★ ${goal[1]} · ★★★ ${goal[2]}${c.unit || ''} ·
+       ${st > prev && prev ? 'new best!' : `best ${starText(Math.max(st, prev))}`}</span>
+     <span class="stats"><span>⏱ ${time}</span><span>🍎 Score ${score}</span><span>📏 Longest ${stats.longest}</span>
+     <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
+    'Next challenge');
 }
 
 // A shower of confetti over the board (used for a new best score)
@@ -1159,7 +1284,7 @@ function hostGame() {
       if (s && (state === 'playing' || state === 'paused' || state === 'countdown')) {
         // Their snake stays as a ghost for this round
         Object.assign(s, { alive:false, respawn:0, gone:true, queue:[] });
-        if (!snakes.some(o => o.alive)) gameOver();
+        if (cfg.play !== 'versus' && !snakes.some(o => o.alive)) gameOver();
       } else { state = 'ready'; reset(); showIntro(); }
       waitingStatus(`P${slot + 1} left. `);
       updateHud(); sendState();
@@ -1248,6 +1373,7 @@ function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   const m = {
     t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
+    ch: challenge, goal, el: elapsed,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone })),
@@ -1349,8 +1475,11 @@ function cleanState(m) {
       rocks: arr(m.rocks, cells).map(cellOf),
       portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
       tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
+      ch: has(CHALLENGES, m.ch) ? m.ch : 'apples',
+      goal: [0, 1, 2].map(i => int(arr(m.goal, 3)[i], 1, 1e4)),
+      el: num(m.el, 0, 1e7),
       skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, MAX_PLAYERS)[i], d)),
-      stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells) },
+      stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells), ch: int(st.ch, 0, 1e6) },
       snakes: list.map(s => {
         const body = arr(s.body, cells).map(cellOf);
         if (!body.length) throw new Error('bad body');
@@ -1398,6 +1527,7 @@ function pumpInbox() {
 
 function applyState(m) {
   const prev = state, now = performance.now();
+  challenge = m.ch; goal = m.goal; elapsed = m.el;
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
   portals = m.portals; TICK = m.tk;
@@ -1740,6 +1870,18 @@ function drawSnake(s, t, now) {
 
 // Emote bubbles float above each snake's head
 function drawEmotes(now) {
+  // Versus: a bobbing crown over whoever is in the lead
+  if (cfg.play === 'versus' && snakes.length) {
+    const top = Math.max(...snakes.map(s => s.apples)), lead = snakes.filter(s => s.apples === top);
+    const L = lead.length === 1 && top > 0 && lead[0].alive ? looks[lead[0].id] : null;
+    if (L && L.emote < 0) {
+      let y = L.hy - CELL * .78 + Math.sin(now / 260) * CELL * .05;
+      if (y < CELL * .3) y = L.hy + CELL * .8;
+      ctx.font = `${CELL * .5}px "Segoe UI Emoji", "Apple Color Emoji", "Noto Color Emoji", sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('👑', L.hx, y);
+    }
+  }
   looks.forEach((L, i) => {
     if (L.emote < 0) return;
     const age = now - L.emoteAt;
@@ -1799,6 +1941,27 @@ function drawCountdown(now) {
   ctx.font = `bold ${CELL * (2.2 + (1 - frac) * .6)}px Roboto, Arial`;
   ctx.lineWidth = 8; ctx.strokeStyle = 'rgba(0,0,0,.25)';
   ctx.strokeText(n, COLS * CELL / 2, ROWS * CELL / 2); ctx.fillText(n, COLS * CELL / 2, ROWS * CELL / 2);
+  ctx.restore();
+  // Challenges and versus: say what this round is about
+  if (cfg.play === 'coop') return;
+  const c = CHALLENGES[challenge], W = COLS * CELL;
+  const lines = cfg.play === 'versus'
+    ? [['⚔ Versus', .62], [`Most apples in ${clock(VERSUS_MS / 1000)} wins!`, .4]]
+    : [[`${c.icon} ${c.name}`, .62], [c.desc, .36], [`★ ${goal[0]}   ★★ ${goal[1]}   ★★★ ${goal[2]}${c.unit || ''}   ·   ${c.secs}s`, .36]];
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  let y = CELL * .9;
+  ctx.fillStyle = 'rgba(0,0,0,.35)';
+  ctx.fillRect(0, y - CELL * .6, W, lines.reduce((h, [, s]) => h + CELL * s * 1.5, 0) + CELL * .3);
+  for (const [text, size] of lines) {
+    // shrink long lines to fit small boards
+    ctx.font = `bold ${CELL * size}px Roboto, Arial, "Segoe UI Emoji"`;
+    const fit = Math.min(1, W * .94 / ctx.measureText(text).width);
+    ctx.font = `bold ${CELL * size * fit}px Roboto, Arial, "Segoe UI Emoji"`;
+    ctx.fillStyle = size > .5 ? '#ffe680' : '#fff';
+    ctx.fillText(text, W / 2, y);
+    y += CELL * size * 1.5;
+  }
   ctx.restore();
 }
 
