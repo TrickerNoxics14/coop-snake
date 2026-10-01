@@ -98,6 +98,14 @@
   .gbar select { background:transparent; color:#fff; border:0; font:inherit; font-size:14px; font-weight:600; outline:none; cursor:pointer; }
   .gbar select:disabled { opacity:.6; cursor:default; }
   .gbar option { color:#222; }
+  .two { font-size:14px; display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .two input { width:16px; height:16px; cursor:pointer; }
+  .lobby { background:rgba(0,0,0,.28); border-radius:10px; padding:8px 10px; min-width:280px; max-width:100%; font-size:14px; }
+  .lobby h3 { margin:0 0 6px; font-size:14px; }
+  .lobby .room { display:flex; align-items:center; gap:8px; padding:4px 0; border-top:1px solid rgba(255,255,255,.1); }
+  .lobby .room span { flex:1; text-align:left; }
+  .lobby .room small { opacity:.75; }
+  .lobby .empty { opacity:.75; font-size:13px; }
   .extras { display:flex; gap:14px; justify-content:center; }
   .stars { color:#ffe680; letter-spacing:1px; }
   .hud .low { color:#ffd0c8; }
@@ -161,12 +169,20 @@
           <button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
         </div>
         <div class="online menu-only" id="onlinePanel" hidden>
-          <div class="row" id="onIdle">
-            <button class="btn2" id="hostBtn">Host a game</button>
-            <span style="opacity:.7">or</span>
-            <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">
-            <button class="btn2" id="joinBtn">Join</button>
+          <div id="onIdle" class="online">
+            <div class="row">
+              <button class="btn2" id="hostPubBtn" title="Anyone can see it in the list below and join">🌍 Host public game</button>
+              <button class="btn2" id="hostBtn" title="Only people you give the code to can join">🔒 Host private game</button>
+            </div>
+            <div class="row">
+              <input id="codeIn" maxlength="6" placeholder="CODE" autocomplete="off" spellcheck="false">
+              <button class="btn2" id="joinBtn">Join with code</button>
+            </div>
+            <div class="lobby" id="lobby"></div>
           </div>
+          <label class="two" title="Play online with two people on this computer: WASD and the arrow keys">
+            <input type="checkbox" id="twoBox"> 👥 2 players on this keyboard
+          </label>
           <div class="status" id="onStatus"></div>
           <button class="link" id="leaveBtn" hidden>Leave online game</button>
         </div>
@@ -175,7 +191,7 @@
           <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></label>
           <label title="Speed"><span>⚡</span><select data-key="speed" aria-label="Speed"><option value="slow">🐢 Slow</option><option value="normal">🐇 Normal</option><option value="fast">⚡ Fast</option></select></label>
           <label title="Board size"><span>▦</span><select data-key="board" aria-label="Board size"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
-          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="blender">Blender</option></select></label>
+          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="boss">👹 Boss</option><option value="blender">Blender</option></select></label>
           <label title="Edges"><span>🧱</span><select data-key="mode" aria-label="Edges"><option value="walls">Walls</option><option value="wrap">Wrap around</option></select></label>
           <label title="How to play"><span>👥</span><select data-key="play" aria-label="How to play"><option value="coop">Co-op</option><option value="challenge">Challenges</option><option value="versus">Versus</option></select></label>
         </div>
@@ -222,12 +238,23 @@ const GAMES = {
   light: "Lights out! You can only see what's near the snakes' heads. Apples glow a little.",
   shield: 'Grab a 🛡 shield to survive your next crash — you turn see-through for a moment and slip free.',
   magnet: 'Your head is a magnet: apples close to you slide toward your mouth.',
+  boss: 'Boss fight! Bite a boss on its glowing tail to hurt it — touching the rest of it knocks you out. Beat one and a tougher one shows up.',
   blender: 'A random mode every round — keep on your toes!',
 };
 const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison:'Poison', portal:'Portal', speed:'Speed-up',
-  statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', blender:'Blender' };
+  statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', boss:'Boss', blender:'Blender' };
 // Blender picks one of these each round
-const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet'];
+const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet', 'boss'];
+// Boss mode: the bosses take turns, and each round of four gets tougher.
+// `every` = moves once every this many player moves; `ai` = how it picks where to go.
+const BOSSES = {
+  chomper: { name:'Chomper', icon:'👹', color:'#d7263d', hp:3, len:7, every:2, ai:'chase', desc:'chases the closest snake' },
+  glutton: { name:'Glutton', icon:'🐷', color:'#f08a24', hp:4, len:6, every:2, ai:'apples', desc:'steals your apples' },
+  zippy:   { name:'Zippy', icon:'⚡', color:'#8e44ad', hp:3, len:5, every:1, ai:'wander', desc:'fast and twitchy' },
+  titan:   { name:'Titan', icon:'🗿', color:'#3d4a5c', hp:6, len:11, every:3, ai:'chase', desc:'huge, slow and tough' },
+};
+const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'titan'];
+const BOSS_HIT_POINTS = 3, BOSS_WIN_POINTS = 10, BOSS_STUN = 6, BOSS_GAP_MS = 3000;
 const GLIDE_MS = 80; // how fast the head glides onto a new line after a mid-square turn
 const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
 let G = 'classic'; // the mode actually being played this round (differs from cfg.game in Blender)
@@ -337,7 +364,8 @@ function loadSkins() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('coopSnakeSkins') || '{}') || {}; } catch (e) {}
   const local = Array.isArray(saved.local) ? saved.local : [];
-  return { local: [validSkin(local[0], DEFAULT_SKINS[0]), validSkin(local[1], DEFAULT_SKINS[1])], online: validSkin(saved.online, DEFAULT_SKINS[0]) };
+  return { local: [validSkin(local[0], DEFAULT_SKINS[0]), validSkin(local[1], DEFAULT_SKINS[1])], online: validSkin(saved.online, DEFAULT_SKINS[0]),
+           online2: validSkin(saved.online2, DEFAULT_SKINS[1]) }; // (online2 = the second player on this keyboard)
 }
 const savedSkins = loadSkins();
 const copySkins = () => DEFAULT_SKINS.map(k => ({ ...k }));
@@ -345,7 +373,10 @@ const copySkins = () => DEFAULT_SKINS.map(k => ({ ...k }));
 function startingSkins() {
   const k = copySkins();
   if (uiMode === 'local') { k[0] = { ...savedSkins.local[0] }; k[1] = { ...savedSkins.local[1] }; }
-  else if (role !== 'guest') k[0] = { ...savedSkins.online };
+  else if (role !== 'guest') {
+    k[0] = { ...savedSkins.online };
+    if (seat2[0] !== undefined) k[seat2[0]] = { ...savedSkins.online2 };
+  }
   return k;
 }
 let skins = copySkins();
@@ -367,6 +398,11 @@ function fixClash() {
 // The host is player slot 0; up to three friends get slots 1–3.
 let uiMode = 'local', role = 'local', peer = null, conn = null, roomCode = '', mySlot = 1;
 const conns = {};      // host: slot -> that friend's connection
+// Two people on one keyboard can play online too: their second snake gets its own slot.
+// Host: seat2[primary slot] = that computer's second slot (seat2[0] is the host's own second player).
+const seat2 = {};
+let mySlot2 = -1;      // guest: my second player's slot (-1 = none)
+let wantTwo = false;   // the "2 players on this keyboard" box
 const lastSeq = {};    // host: slot -> newest key press received from that friend
 const pings = {};      // host: slot -> that friend's connection delay
 let recording = false, outFx = [], inputSeq = 0, unacked = [], forceOverlay = false;
@@ -438,6 +474,7 @@ function baseHint() {
   if (G === 'light') return "Shared score · It's dark — stay close and keep your eyes open";
   if (G === 'shield') return 'Shared score · A 🛡 shield saves you from one crash';
   if (G === 'magnet') return 'Shared score · Apples near your head get pulled in';
+  if (G === 'boss') return 'Shared score · Bite the boss on its glowing tail — avoid the rest of it!';
   if (G === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
@@ -477,8 +514,13 @@ document.addEventListener('fullscreenchange', fit);
 // Which player slots get a snake: two on one keyboard, or online the host plus every connected friend
 function playerSlots() {
   if (role !== 'host') return [0, 1];
-  return [0, ...Object.keys(conns).map(Number).filter(i => conns[i].open).sort()];
+  const out = [0];
+  if (seat2[0] !== undefined) out.push(seat2[0]);
+  for (const k of Object.keys(conns)) if (conns[k].open) { out.push(+k); if (seat2[k] !== undefined) out.push(seat2[k]); }
+  return out.sort((a, b) => a - b);
 }
+// Host: the lowest player slot nobody is using
+const freeSlot = () => [1, 2, 3].find(i => !conns[i] && !Object.values(seat2).includes(i));
 const snakeOf = id => snakes.find(s => s.id === id);
 
 function makeSnake(id, y) {
@@ -502,8 +544,10 @@ function reset() {
   statues = [];
   if (G === 'key') { apples.forEach(a => { a.locked = true; }); ensureKey(); }
   if (G === 'shield') spawnApple('shield');
+  boss = null; bossWave = 0; bossNext = 0;
+  if (G === 'boss') spawnBoss();
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99]; elapsed = 0;
-  stats = { rescues:0, teamwork:0, longest:4, eaten:0, golds:0, safeMs:0, ch:0 };
+  stats = { rescues:0, teamwork:0, longest:4, eaten:0, golds:0, safeMs:0, ch:0, bosses:0 };
   particles = []; popups = []; waves = []; shake = 0;
   if (cfg.play === 'challenge' && role !== 'guest') pickChallenge();
   $('hint').textContent = hintText();
@@ -523,7 +567,7 @@ function pickChallenge() {
 function occupied() {
   const cells = [];
   snakes.forEach(s => s.alive && cells.push(...s.body));
-  return cells.concat(apples, rocks, portals, statues);
+  return cells.concat(apples, rocks, portals, statues, boss ? boss.body : []);
 }
 
 const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield).length;
@@ -565,6 +609,114 @@ function settleStatues() {
   if (!ready.length) return;
   statues = statues.filter(c => !ready.includes(c));
   rocks.push(...ready);
+}
+
+// ---------- Boss mode ----------
+let boss = null, bossWave = 0, bossNext = 0; // bossNext = moves until the next boss shows up
+const bossAt = p => boss ? boss.body.findIndex(c => eq(c, p)) : -1;
+function wrapDist(a, b) {
+  let dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
+  if (cfg.mode === 'wrap') { dx = Math.min(dx, COLS - dx); dy = Math.min(dy, ROWS - dy); }
+  return dx + dy;
+}
+
+// A new boss appears in a free row, well away from everyone's heads
+function spawnBoss() {
+  const kind = BOSS_ORDER[bossWave % BOSS_ORDER.length], B = BOSSES[kind];
+  const len = Math.min(B.len, COLS - 3), occ = occupied();
+  const free = p => inBounds(p) && !occ.some(c => eq(c, p));
+  const farFromHeads = p => snakes.every(s => !s.alive || wrapDist(s.body[0], p) > 5);
+  for (let tries = 0; tries < 400; tries++) {
+    const dir = Math.random() < .5 ? 'left' : 'right', d = DIRS[dir];
+    const hx = dir === 'left' ? Math.random() * (COLS - len + 1) | 0 : len - 1 + (Math.random() * (COLS - len + 1) | 0);
+    const y = Math.random() * ROWS | 0;
+    const body = Array.from({ length: len }, (_, i) => ({ x: hx - d.x * i, y }));
+    if (!body.every(free) || !farFromHeads(body[0])) continue;
+    const hp = B.hp + Math.floor(bossWave / BOSS_ORDER.length); // each round of four bosses is tougher
+    boss = { kind, body, dir, hp, max: hp, stun: 4, wait: 0, grow: 0 };
+    for (const c of body) burst(c, B.color, 4, 2.5);
+    popup(body[0], B.name + '!', '#ffd0d0');
+    doShake(); beep(110, .3, 0, 'sawtooth'); beep(82, .4, .2, 'sawtooth');
+    return;
+  }
+  bossNext = 3; // no room right now: try again in a moment
+}
+
+// Can the boss move its head onto p? Walls, rocks, its own body and snakes' bodies block it
+// (it can bite a snake's head, though).
+function bossCanEnter(p) {
+  if (!inBounds(p) || rocks.some(r => eq(r, p))) return false;
+  const i = bossAt(p);
+  if (i >= 0 && (i < boss.body.length - 1 || boss.grow > 0)) return false;
+  return !snakes.some(s => s.alive && s.body.some((c, j) => j > 0 && eq(c, p)));
+}
+
+function bossTarget(ai) {
+  const near = list => list.sort((a, b) => wrapDist(boss.body[0], a) - wrapDist(boss.body[0], b))[0] || null;
+  if (ai === 'apples') { const a = near(apples.filter(a => !a.poison)); if (a) return a; }
+  if (ai === 'wander') return null;
+  return near(snakes.filter(s => s.alive).map(s => s.body[0]));
+}
+
+function knockOut(s) {
+  s.alive = false; s.queue = []; s.log = []; s.respawn = RESPAWN_TICKS;
+  burst(s.body[0], skinHex(s.id), 22, 4);
+  doShake(); beep(160, .25, 0, 'sawtooth');
+}
+
+// The boss takes a hit (bitten on the tail by snake `by`, or boxed in so it can't move)
+function hurtBoss(by, label, cut) {
+  const B = BOSSES[boss.kind], tail = boss.body[boss.body.length - 1];
+  boss.hp--; boss.stun = BOSS_STUN;
+  // a bite takes the tail off from where it was bitten (it grows back a little)
+  if (cut !== undefined) { boss.body.length = Math.max(1, cut); boss.grow += 2; }
+  burst(tail, '#ffe066', 16, 3.5); popup(tail, label, '#ffe066');
+  doShake(); beep(196, .12, 0, 'square'); beep(147, .18, .1, 'square');
+  if (by) { by.apples += BOSS_HIT_POINTS; score += BOSS_HIT_POINTS; }
+  if (boss.hp > 0) return;
+  // Defeated!
+  for (const c of boss.body) burst(c, B.color, 10, 4.5);
+  popup(boss.body[0], 'Defeated!', '#ffe680');
+  score += BOSS_WIN_POINTS; if (by) by.apples += BOSS_WIN_POINTS;
+  stats.bosses++; bossWave++;
+  boss = null; bossNext = Math.round(BOSS_GAP_MS / TICK);
+  beep(523, .1); beep(659, .1, .1); beep(784, .1, .2); beep(1047, .25, .3);
+}
+
+// The boss's move (after the snakes have moved)
+function bossTick() {
+  if (!boss) { if (bossNext > 0 && --bossNext === 0) spawnBoss(); return; }
+  if (boss.stun > 0) { boss.stun--; return; }
+  const B = BOSSES[boss.kind];
+  if (++boss.wait < B.every) return;
+  boss.wait = 0;
+  const h = boss.body[0];
+  const opts = Object.keys(DIRS).filter(d => d !== OPP[boss.dir] && bossCanEnter(step(h, d)));
+  if (!opts.length) { // boxed in! It gets hurt and turns around
+    hurtBoss(null, 'Trapped!');
+    if (boss) {
+      boss.body.reverse();
+      boss.dir = Object.keys(DIRS).find(d => boss.body.length > 1 && eq(step(boss.body[1], d), boss.body[0])) || OPP[boss.dir];
+    }
+    return;
+  }
+  const target = bossTarget(B.ai);
+  let dir;
+  if (!target || Math.random() < (B.ai === 'wander' ? .35 : .15)) // a bit of randomness so it's not perfect
+    dir = opts.includes(boss.dir) && Math.random() < .65 ? boss.dir : opts[Math.random() * opts.length | 0];
+  else dir = opts.sort((a, b) => wrapDist(step(h, a), target) - wrapDist(step(h, b), target))[0];
+  boss.dir = dir;
+  const nh = step(h, dir);
+  boss.body.unshift(nh);
+  if (boss.grow > 0) boss.grow--; else boss.body.pop();
+  for (const s of snakes) if (s.alive && eq(s.body[0], nh)) { knockOut(s); popup(nh, 'Chomp!', '#ffb3b3'); }
+  const ai = apples.findIndex(a => eq(a, nh));
+  if (ai >= 0) { // it eats the apple (and grows)
+    const a = apples.splice(ai, 1)[0];
+    if (boss.body.length < 20) boss.grow += a.gold ? 2 : 1;
+    burst(a, B.color, 10, 2.5); popup(a, 'Yoink!', '#ffd0a0'); beep(300, .08, 0, 'sawtooth');
+    while (normalApples() < cfg.apples) spawnApple();
+  }
 }
 
 // Reverse mode: the snake turns around — the tail end becomes the head
@@ -694,9 +846,16 @@ function tick() {
     s.body.unshift(s.next); s.moves++;
     if (s.pending > 0) { s.pending--; s.popped = null; } else s.popped = s.body.pop();
   }
+  // Boss mode: biting the boss's tail (its last two squares) hurts it
+  if (boss) for (const s of movers) {
+    const i = bossAt(s.body[0]);
+    if (i >= 1 && i >= boss.body.length - 2) hurtBoss(s, 'Hit! +' + BOSS_HIT_POINTS, i);
+    if (!boss) break;
+  }
   const crashed = peaceful ? [] : movers.filter(s => {
     const h = s.body[0];
     return !inBounds(h)
+      || bossAt(h) >= 0
       || rocks.some(r => eq(r, h))
       || (s.appleIdx >= 0 && (apples[s.appleIdx].poison || apples[s.appleIdx].locked))
       || s.body.some((c, i) => i > 0 && eq(c, h))
@@ -751,6 +910,7 @@ function tick() {
   }
   stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
   if (statues.length) settleStatues();
+  if (G === 'boss') bossTick();
   if (G === 'magnet' && tickNo % 2 === 0) pullApples();
   if (cfg.play === 'challenge') {
     const had = starsOf(stats.ch);
@@ -831,6 +991,7 @@ const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.n
 function aheadBlocked(s, dir) {
   const b = s.body, next = dest(b[0], dir);
   if (s.safe > 0) return !inBounds(next); // see-through after a shield: only walls stop it
+  if (boss) { const i = bossAt(next); if (i >= 0 && i < boss.body.length - 2) return true; } // (its tail is fair game)
   if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => (a.poison || a.locked) && eq(a, next))) return true;
   if (G === 'peaceful') return false;
   // A tail is safe to follow, since it moves out of the way on the same step (unless that snake is growing)
@@ -891,7 +1052,7 @@ function replayTurn(s, k, dir) {
   let eat = false;
   for (let j = k - 1; j >= 0; j--) {
     const head = dest(body[0], dir);
-    if (!inBounds(head) || rocks.some(c => eq(c, head))) return null;
+    if (!inBounds(head) || rocks.some(c => eq(c, head)) || bossAt(head) >= 0) return null;
     body = [head, ...body];
     const tail = recent[j].tail ? body.pop() : null;
     if (!peaceful) {
@@ -1016,7 +1177,8 @@ function showGameOver() {
   showOverlay(isBest ? 'New best! 🏆' : G === 'peaceful' ? 'Well played!' : 'Game over',
     `<span class="bigscore"><span>🍎<b>${score}</b></span><span>🏆<b>${best}</b></span></span>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
-     <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
+     <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span>
+     ${G === 'boss' ? `<span>👹 Bosses beaten ${stats.bosses}</span>` : ''}</span>`,
     'Play again');
 }
 
@@ -1107,12 +1269,16 @@ function steer(player, dir) {
 
 // ---------- Input (keyboard, touch, controllers, buttons) ----------
 const me = () => role === 'guest' ? mySlot : 0;
+// Online: my second player's slot on this keyboard (-1 = none)
+const second = () => role === 'host' ? (seat2[0] ?? -1) : role === 'guest' ? mySlot2 : -1;
+// Online: which slot local player p (0 = WASD side, 1 = arrows side) steers. With one player, any keys steer you.
+const localSlot = p => p === 1 && second() >= 0 ? second() : me();
 const friendCount = () => Object.values(conns).filter(c => c.open).length;
 const connected = () => role === 'host' ? friendCount() > 0 : !!(conn && conn.open);
 
 function playerSteer(p, dir) {
-  if (role === 'guest') guestSteer(dir);
-  else if (role === 'host') { if (connected()) steer(0, dir); }
+  if (role === 'guest') guestSteer(dir, p === 1 && mySlot2 >= 0 ? 1 : 0);
+  else if (role === 'host') { if (connected()) steer(localSlot(p), dir); }
   else if (uiMode === 'local') steer(p, dir);
 }
 
@@ -1143,8 +1309,9 @@ function showEmote(p, i) {
 }
 
 function pressEmote(p, i) {
-  if (role === 'guest') { if (connected() && showEmote(mySlot, i)) send({ t:'emote', i }); }
-  else if (role === 'host') { if (connected() && showEmote(0, i)) send({ t:'emote', p:0, i }); }
+  const slot = localSlot(p);
+  if (role === 'guest') { if (connected() && showEmote(slot, i)) send({ t:'emote', i, who: slot === mySlot2 ? 1 : 0 }); }
+  else if (role === 'host') { if (connected() && showEmote(slot, i)) send({ t:'emote', p:slot, i }); }
   else if (uiMode === 'local') showEmote(p, i);
 }
 
@@ -1185,7 +1352,7 @@ $('emoteBar').addEventListener('click', e => {
   const b = e.target.closest('button');
   if (!b) return;
   b.blur();
-  pressEmote(me(), +b.dataset.e);
+  pressEmote(0, +b.dataset.e);
 });
 
 document.querySelectorAll('select[data-key]').forEach(sel => sel.addEventListener('change', () => {
@@ -1228,7 +1395,7 @@ function pollPads() {
   try { pads = [...navigator.getGamepads()].filter(p => p && p.connected); } catch (e) { return; }
   pads.forEach((p, order) => {
     const prev = padPrev[p.index] || (padPrev[p.index] = { dir:null, btn:[] });
-    const player = role === 'local' ? Math.min(order, 1) : me();
+    const player = Math.min(order, 1); // (online, playerSteer/pressEmote map this to your own snake)
     const down = i => !!(p.buttons[i] && p.buttons[i].pressed);
     let dir = down(12) ? 'up' : down(13) ? 'down' : down(14) ? 'left' : down(15) ? 'right' : null;
     if (!dir) {
@@ -1251,7 +1418,7 @@ function pollPads() {
 // ---------- Online ----------
 function playerName(i) {
   if (role === 'local') return 'P' + (i + 1);
-  return i === me() ? 'You' : 'P' + (i + 1);
+  return i === me() ? (second() >= 0 ? 'You 1' : 'You') : i === second() ? 'You 2' : 'P' + (i + 1);
 }
 function setStatus(html) { $('onStatus').innerHTML = html; }
 // Guest: message the host. Host: message every friend (or `except` one of them).
@@ -1271,7 +1438,8 @@ function applySkins() {
 function renderSkinPanel() {
   const panel = $('skinPanel');
   if (panel.hidden) return;
-  const slots = uiMode === 'local' ? [[0, 'P1'], [1, 'P2']] : [[me(), 'You']];
+  const slots = uiMode === 'local' ? [[0, 'P1'], [1, 'P2']]
+    : second() >= 0 ? [[me(), 'You 1'], [second(), 'You 2']] : [[me(), 'You']];
   panel.innerHTML = slots.map(([slot, label]) => {
     const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1; // local is always P1/P2
     return `<div class="skin-row"><b>${label}</b>
@@ -1286,9 +1454,10 @@ function setSkin(slot, k) {
   skins[slot] = k;
   if (uiMode === 'local') savedSkins.local[slot] = k;
   else {
-    savedSkins.online = k;
+    const two = slot === second();
+    savedSkins[two ? 'online2' : 'online'] = k;
     if (role === 'host') { fixClash(); sendState(); }
-    else if (role === 'guest') send({ t:'skin', c:k.c, p:k.p });
+    else if (role === 'guest') send({ t:'skin', c:k.c, p:k.p, who: two ? 1 : 0 });
   }
   saveSkins();
   applySkins();
@@ -1325,7 +1494,11 @@ function renderMenu() {
   $('play').hidden = online && !on;
   document.querySelectorAll('select[data-key]').forEach(sel => { sel.disabled = role === 'guest'; });
   $('keys').hidden = online && !on;
-  $('keys').innerHTML = online
+  $('twoBox').parentElement.hidden = !online;
+  $('twoBox').checked = wantTwo;
+  $('keys').innerHTML = online && second() >= 0
+    ? `<div>${dotOf(me())}<b>You 1</b> W A S D · emotes 1–4</div><div>${dotOf(second())}<b>You 2</b> Arrow keys · emotes 7–0</div>`
+    : online
     ? `<div>${youAre()} · steer with W A S D or arrows · emotes 1–4</div>`
     : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D · emotes 1–4</div>
        <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys · emotes 7–0</div>`;
@@ -1358,6 +1531,7 @@ $('modeSeg').addEventListener('click', e => {
   skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
+  if (uiMode === 'online') { renderLobby(); lobbyStart(); } else lobbyStop();
 });
 
 function makeCode() {
@@ -1370,10 +1544,10 @@ function makeCode() {
 const canInvite = /^https?:$/.test(location.protocol);
 function waitingStatus(prefix) {
   const n = friendCount();
-  setStatus(`${prefix || ''}Room code: <span class="code">${roomCode}</span>` +
+  setStatus(`${prefix || ''}${publicRoom ? `🌍 Public room <b>${roomTitle(roomName)}</b> · ` : ''}Room code: <span class="code">${roomCode}</span>` +
     (canInvite ? `<button class="btn2 invite" id="copyInvite">Copy invite link</button>` : '') +
-    (n ? `<br><b>${n + 1} of ${MAX_PLAYERS} players</b> in the room.` +
-         (n < MAX_PLAYERS - 1 ? ` More friends can still join with the ${canInvite ? 'link or code' : 'code'}.` : '') +
+    (n ? `<br><b>${playerSlots().length} of ${MAX_PLAYERS} players</b> in the room.` +
+         (freeSlot() !== undefined ? ` More friends can still join with the ${canInvite ? 'link or code' : 'code'}.` : '') +
          ` Press Play when everyone's in!`
        : `<br>Send the ${canInvite ? 'link or code' : 'code'} to up to ${MAX_PLAYERS - 1} friends. Waiting for them to join…`));
 }
@@ -1387,19 +1561,54 @@ $('onStatus').addEventListener('click', e => {
   else manual();
 });
 
-function hostGame() {
+// Host: a player slot is no longer in use. Mid-round its snake stays as a ghost; otherwise the menu updates.
+function dropSlot(x) {
+  const s = snakeOf(x);
+  if (s && (state === 'playing' || state === 'paused' || state === 'countdown')) {
+    Object.assign(s, { alive:false, respawn:0, gone:true, queue:[] });
+    if (cfg.play !== 'versus' && !snakes.some(o => o.alive)) gameOver();
+  } else { state = 'ready'; reset(); showIntro(); }
+}
+
+// Host: give (or take back) a second snake for the computer playing `slot` (0 = the host's own keyboard)
+function hostSetTwo(slot, on, skin) {
+  if (on && seat2[slot] === undefined) {
+    const x = freeSlot();
+    if (x === undefined) {
+      if (slot === 0) { wantTwo = false; renderMenu(); waitingStatus('The room is full — no space for a second player. '); }
+      else sendTo(conns[slot], { t:'nofree' });
+      return;
+    }
+    seat2[slot] = x; skins[x] = validSkin(skin, DEFAULT_SKINS[x]);
+    if (state === 'ready' || state === 'over') { state = 'ready'; reset(); showIntro(); }
+  } else if (!on && seat2[slot] !== undefined) {
+    const x = seat2[slot];
+    delete seat2[slot];
+    dropSlot(x);
+  } else return;
+  fixClash(); applySkins();
+  if (peer && peer.open) waitingStatus();
+  updateHud(); sendState(); postRoom();
+}
+
+function hostGame(isPublic) {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'host'; roomCode = makeCode(); conn = null; pingMs = null;
+  publicRoom = isPublic === true;
+  roomName = [Math.random() * ADJS.length | 0, Math.random() * ANIMALS.length | 0];
   for (const k in conns) delete conns[k];
   for (const k in pings) delete pings[k];
+  for (const k in seat2) delete seat2[k];
+  if (wantTwo) seat2[0] = 1;
   skins = startingSkins(); fixClash();
+  state = 'ready'; reset(); showIntro();
   setStatus('Creating room…'); applySkins();
   peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
-  peer.on('open', () => waitingStatus());
+  peer.on('open', () => { waitingStatus(); postRoom(); });
   peer.on('connection', c => {
     // Each friend gets the lowest free player slot (1–3)
-    const slot = [1, 2, 3].find(i => !conns[i]);
+    const slot = freeSlot();
     if (!slot) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
     conns[slot] = c;
     c.on('open', () => {
@@ -1409,27 +1618,26 @@ function hostGame() {
       // In the menu, the new snake appears straight away; mid-game, they join at the next round
       if (state === 'ready' || state === 'over') { state = 'ready'; reset(); showIntro(); }
       waitingStatus();
-      renderMenu(); sendState();
+      renderMenu(); sendState(); postRoom();
     });
     c.on('data', m => { if (conns[slot] === c) onHostData(slot, m); });
     c.on('close', () => {
       if (conns[slot] !== c) return;
-      delete conns[slot]; delete pings[slot];
+      const two = seat2[slot];
+      delete conns[slot]; delete pings[slot]; delete seat2[slot];
       if (role !== 'host') return;
+      postRoom();
       if (!friendCount()) { state = 'ready'; reset(); showIntro(); waitingStatus('Everyone left. '); return; }
-      const s = snakeOf(slot);
-      if (s && (state === 'playing' || state === 'paused' || state === 'countdown')) {
-        // Their snake stays as a ghost for this round
-        Object.assign(s, { alive:false, respawn:0, gone:true, queue:[] });
-        if (cfg.play !== 'versus' && !snakes.some(o => o.alive)) gameOver();
-      } else { state = 'ready'; reset(); showIntro(); }
+      // Their snake(s) stay as ghosts for this round
+      dropSlot(slot);
+      if (two !== undefined) dropSlot(two);
       waitingStatus(`P${slot + 1} left. `);
       updateHud(); sendState();
     });
   });
   peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
   peer.on('error', e => {
-    if (e.type === 'unavailable-id') hostGame();
+    if (e.type === 'unavailable-id') hostGame(publicRoom);
     else if (connected()) { try { peer.reconnect(); } catch (err) {} } // a matchmaking hiccup; the game itself is fine
     else if (e.type !== 'peer-unavailable') leaveOnline(`Online error (${e.type}). Try again.`);
   });
@@ -1442,7 +1650,7 @@ function joinGame(code) {
   if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
   if (peer) try { peer.destroy(); } catch (e) {}
   role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
-  inbox = []; lastN = -1; pingMs = null; mySlot = 1;
+  inbox = []; lastN = -1; pingMs = null; mySlot = 1; mySlot2 = -1;
   skins = copySkins();
   setStatus('Connecting…'); applySkins();
   const myPeer = peer = new Peer({ debug:0 });
@@ -1458,6 +1666,7 @@ function joinGame(code) {
       renderMenu();
       send({ t:'ping', ts: performance.now() });
       send({ t:'skin', c: savedSkins.online.c, p: savedSkins.online.p });
+      if (wantTwo) send({ t:'two', on:true, c: savedSkins.online2.c, p: savedSkins.online2.p });
     });
     c.on('data', m => {
       if (!m || typeof m !== 'object') return;
@@ -1469,11 +1678,12 @@ function joinGame(code) {
         if (inbox.length > 30) inbox.splice(0, inbox.length - 30);
         pumpInbox();
       } else if (m.t === 'emote') {
-        if (isIdx(m.p, MAX_PLAYERS) && m.p !== mySlot && isIdx(m.i, EMOTES.length)) showEmote(m.p, m.i);
+        if (isIdx(m.p, MAX_PLAYERS) && m.p !== mySlot && m.p !== mySlot2 && isIdx(m.i, EMOTES.length)) showEmote(m.p, m.i);
       } else if (m.t === 'pong') {
         const rtt = performance.now() - m.ts;
         if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60000) { pingMs = Math.round(rtt); renderPing(); }
       } else if (m.t === 'full') leaveOnline('That room is already full.');
+      else if (m.t === 'nofree') { wantTwo = false; renderMenu(); setStatus(`Connected to room <b>${code}</b>. The room is full, so there's no space for a second player.`); }
     });
     c.on('close', () => { if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.'); });
   });
@@ -1486,7 +1696,9 @@ function joinGame(code) {
 
 function leaveOnline(msg) {
   const oldConn = conn, oldPeer = peer;
-  role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1;
+  if (role === 'host') unpostRoom();
+  role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1; mySlot2 = -1; publicRoom = false;
+  for (const k in seat2) delete seat2[k];
   try { oldConn && oldConn.close(); } catch (e) {}
   try { oldPeer && oldPeer.destroy(); } catch (e) {}
   for (const k in conns) { try { conns[k].close(); } catch (e) {} delete conns[k]; }
@@ -1498,7 +1710,156 @@ function leaveOnline(msg) {
   setStatus(msg || '');
 }
 
-$('hostBtn').addEventListener('click', hostGame);
+// ---------- Public lobby ----------
+// There's no game server, so one player's browser keeps the list of public rooms: whoever claims the lobby
+// ID first. Everyone else in the online menu connects to it to read the list, and public hosts post their
+// room every few seconds. If that browser leaves, the next one to notice takes over.
+// Rooms only have made-up names picked from the lists below (no typed text), and everything is checked.
+const LOBBY_ID = PEER_PREFIX + 'lobby';
+const ADJS = ['Happy', 'Speedy', 'Sneaky', 'Brave', 'Sleepy', 'Jolly', 'Mighty', 'Tiny', 'Fuzzy', 'Lucky', 'Wiggly', 'Sunny'];
+const ANIMALS = ['Snakes', 'Pythons', 'Cobras', 'Vipers', 'Worms', 'Lizards', 'Geckos', 'Newts', 'Frogs', 'Turtles', 'Dragons', 'Eels'];
+const PLAY_NAMES = { coop:'Co-op', challenge:'Challenges', versus:'Versus' };
+const roomTitle = n => `${ADJS[n[0]]} ${ANIMALS[n[1]]}`;
+const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
+const ROOM_TTL = 10000; // a room that hasn't posted for this long is dropped from the list
+let publicRoom = false, roomName = [0, 0];
+let lobbyPeer = null, lobbyConn = null, lobbyKeeper = false, lobbyRooms = [], lobbyTries = 0, lobbyTimer = null;
+const keptRooms = new Map(); // (list keeper) code -> room, plus who posted it and when
+let lobbyLinks = 0;
+
+function cleanRoom(r) {
+  if (!r || typeof r !== 'object' || typeof r.code !== 'string' || !CODE_RE.test(r.code)) return null;
+  const n = arr(r.name, 2);
+  if (!isIdx(n[0], ADJS.length) || !isIdx(n[1], ANIMALS.length)) return null;
+  return { code: r.code, name: [n[0], n[1]], n: int(r.n, 1, MAX_PLAYERS), game: has(GAMES, r.game) ? r.game : 'classic',
+           play: has(PLAYS, r.play) ? r.play : 'coop', live: r.live === true };
+}
+function roomList() {
+  const now = performance.now();
+  for (const [k, r] of keptRooms) if (now - r.at > ROOM_TTL) keptRooms.delete(k);
+  return [...keptRooms.values()].map(cleanRoom).filter(Boolean).slice(0, 30);
+}
+
+function lobbyStart() {
+  if (lobbyPeer || !window.Peer || uiMode !== 'online') return;
+  const p = lobbyPeer = new Peer(LOBBY_ID, { debug:0 });
+  p.on('open', () => { if (lobbyPeer !== p) return; lobbyKeeper = true; lobbyTries = 0; renderLobby(); postRoom(); });
+  p.on('connection', c => { // someone wants the list
+    if (lobbyLinks >= 200) { setTimeout(() => { try { c.close(); } catch (e) {} }, 0); return; }
+    lobbyLinks++;
+    c.budget = 5; c.at = performance.now();
+    c.on('data', m => keeperData(c, m));
+    c.on('close', () => {
+      lobbyLinks--;
+      for (const [k, r] of keptRooms) if (r.by === c.peer) keptRooms.delete(k);
+    });
+  });
+  p.on('error', e => {
+    if (lobbyPeer !== p) return;
+    if (e.type === 'unavailable-id') { lobbyStop(); lobbyJoin(); } // someone else keeps the list: read it from them
+    else if (!lobbyKeeper) lobbyRetry();
+  });
+  p.on('disconnected', () => { if (lobbyPeer === p) try { p.reconnect(); } catch (e) {} });
+}
+
+function lobbyJoin() {
+  if (lobbyPeer || !window.Peer) return;
+  const p = lobbyPeer = new Peer({ debug:0 });
+  p.on('open', () => {
+    if (lobbyPeer !== p) return;
+    const c = lobbyConn = p.connect(LOBBY_ID, { reliable:true, serialization:'json' });
+    c.on('open', () => { lobbyTries = 0; lobbyAsk(); postRoom(); });
+    c.on('data', m => {
+      if (lobbyConn !== c || !m || m.t !== 'rooms') return;
+      lobbyRooms = arr(m.rooms, 30).map(cleanRoom).filter(Boolean);
+      renderLobby();
+    });
+    c.on('close', () => { if (lobbyConn === c) lobbyRetry(); }); // the keeper left: try to take over
+  });
+  p.on('error', () => { if (lobbyPeer === p) lobbyRetry(); });
+}
+
+function lobbyStop() {
+  const p = lobbyPeer;
+  lobbyPeer = null; lobbyConn = null; lobbyKeeper = false; lobbyLinks = 0;
+  try { p && p.destroy(); } catch (e) {}
+}
+// Try again a bit later (a random wait, so everyone doesn't grab the lobby at the same moment)
+function lobbyRetry() {
+  lobbyStop();
+  clearTimeout(lobbyTimer);
+  lobbyTimer = setTimeout(() => { lobbyTimer = null; lobbyStart(); }, Math.min(15000, 800 * 2 ** lobbyTries++) * rand(.6, 1.3));
+}
+
+// Keeper: messages from someone connected to the lobby (untrusted, and limited to a few per second)
+function keeperData(c, m) {
+  const now = performance.now();
+  c.budget = Math.min(5, c.budget + (now - c.at) / 1000 * 3); c.at = now;
+  if (c.budget < 1 || !m || typeof m !== 'object') return;
+  c.budget--;
+  if (m.t === 'list') sendTo(c, { t:'rooms', rooms: roomList() });
+  else if (m.t === 'post') {
+    const r = cleanRoom(m.room);
+    if (!r) return;
+    const old = keptRooms.get(r.code);
+    if (old && old.by !== c.peer) return; // only the room's own host can update it
+    if (!old && keptRooms.size >= 50) return;
+    keptRooms.set(r.code, { ...r, by: c.peer, at: now });
+    renderLobby();
+  } else if (m.t === 'gone' && typeof m.code === 'string') {
+    const old = keptRooms.get(m.code);
+    if (old && old.by === c.peer) { keptRooms.delete(m.code); renderLobby(); }
+  }
+}
+
+function lobbyAsk() { if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'list' }); }
+
+// Public host: put (or keep) my room in the list
+function postRoom() {
+  if (role !== 'host' || !publicRoom || !peer || !peer.open) return;
+  const room = { code: roomCode, name: roomName, n: playerSlots().length, game: cfg.game, play: cfg.play,
+                 live: state !== 'ready' && state !== 'over' };
+  if (lobbyKeeper) { keptRooms.set(roomCode, { ...room, by: 'me', at: performance.now() }); renderLobby(); }
+  else if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'post', room });
+}
+function unpostRoom() {
+  if (!publicRoom) return;
+  if (lobbyKeeper) keptRooms.delete(roomCode);
+  else if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'gone', code: roomCode });
+}
+
+function renderLobby() {
+  const rooms = (lobbyKeeper ? roomList() : lobbyRooms).filter(r => r.code !== roomCode);
+  const ready = lobbyKeeper || (lobbyConn && lobbyConn.open);
+  $('lobby').innerHTML = '<h3>🌍 Public games</h3>' + (rooms.length
+    ? rooms.map(r => `<div class="room"><span><b>${roomTitle(r.name)}</b><br>
+        <small>${GAME_NAMES[r.game]} · ${PLAY_NAMES[r.play]} · ${r.n}/${MAX_PLAYERS} players${r.live ? ' · playing now' : ''}</small></span>
+        <button class="btn2" data-join="${r.code}"${r.n >= MAX_PLAYERS ? ' disabled' : ''}>${r.n >= MAX_PLAYERS ? 'Full' : 'Join'}</button></div>`).join('')
+    : `<div class="empty">${ready ? 'No public games right now — host one!' : 'Looking for games…'}</div>`);
+}
+$('lobby').addEventListener('click', e => {
+  const b = e.target.closest('[data-join]');
+  if (b && !b.disabled && CODE_RE.test(b.dataset.join)) joinGame(b.dataset.join);
+});
+
+// Keep the lobby going while the online menu is open, and keep public rooms listed
+setInterval(() => {
+  if (uiMode !== 'online') { if (lobbyPeer) lobbyStop(); return; }
+  if (!lobbyPeer) { if (!lobbyTimer) lobbyStart(); return; }
+  if (lobbyKeeper) renderLobby(); else if (role === 'local') lobbyAsk();
+  postRoom();
+}, 3000);
+
+$('hostBtn').addEventListener('click', () => hostGame(false));
+$('hostPubBtn').addEventListener('click', () => hostGame(true));
+// "2 players on this keyboard"
+$('twoBox').addEventListener('change', e => {
+  e.currentTarget.blur(); // so the keys steer again
+  wantTwo = e.currentTarget.checked;
+  if (role === 'host') hostSetTwo(0, wantTwo, savedSkins.online2);
+  else if (role === 'guest' && connected()) send({ t:'two', on: wantTwo, c: savedSkins.online2.c, p: savedSkins.online2.p });
+  renderMenu();
+});
 $('joinBtn').addEventListener('click', () => joinGame($('codeIn').value));
 $('leaveBtn').addEventListener('click', () => leaveOnline(''));
 
@@ -1510,7 +1871,8 @@ function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   const m = {
     t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
-    ch: challenge, goal, el: elapsed, g: G, statues,
+    ch: challenge, goal, el: elapsed, g: G, statues, bw: bossWave, bn: bossNext,
+    boss: boss && { kind: boss.kind, body: boss.body, dir: boss.dir, hp: boss.hp, max: boss.max, stun: boss.stun },
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone,
@@ -1518,23 +1880,26 @@ function sendState() {
     fx: outFx,
   };
   // Each friend also hears which player they are and which of their key presses have arrived
-  for (const [slot, c] of Object.entries(conns)) sendTo(c, { ...m, you: +slot, ack: lastSeq[slot] || 0 });
+  for (const [slot, c] of Object.entries(conns)) sendTo(c, { ...m, you: +slot, you2: seat2[slot] ?? -1, ack: lastSeq[slot] || 0 });
   outFx = [];
 }
 
 // Everything from the guest is untrusted: accept only well-formed messages
-const pingSeen = {};
+const pingSeen = {}, twoSeen = {};
 function onHostData(slot, m) {
   if (!m || typeof m !== 'object') return;
   switch (m.t) {
     case 'input': {
       if (!has(DIRS, m.dir) || !Number.isSafeInteger(m.seq)) return;
       lastSeq[slot] = Math.max(lastSeq[slot] || 0, m.seq);
+      // `who` = which of that computer's players (1 = their second player on the same keyboard)
+      const target = m.who === 1 ? seat2[slot] : slot;
+      if (target === undefined) return;
       // `at` = the move the friend meant to turn on, based on what their screen showed
       const at = Number.isSafeInteger(m.at) ? m.at : tickNo + 1;
-      if (state === 'playing' && at <= tickNo && lateTurn(slot, m.dir, at)) return;
-      const s = snakeOf(slot);
-      if (state === 'ready' || state === 'over') steer(slot, m.dir);
+      if (state === 'playing' && at <= tickNo && lateTurn(target, m.dir, at)) return;
+      const s = snakeOf(target);
+      if (state === 'ready' || state === 'over') steer(target, m.dir);
       else if ((state === 'playing' || state === 'countdown') && s && s.alive)
         queueAt(s, m.dir, Math.min(at, tickNo + 3), tickNo);
       break;
@@ -1545,13 +1910,25 @@ function onHostData(slot, m) {
       else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
       break;
     case 'quit': endGame(); break;
-    case 'skin':
-      skins[slot] = validSkin(m, skins[slot]); fixClash(); applySkins(); sendState();
+    case 'skin': {
+      const target = m.who === 1 ? seat2[slot] : slot;
+      if (target === undefined) return;
+      skins[target] = validSkin(m, skins[target]); fixClash(); applySkins(); sendState();
       break;
-    case 'emote':
+    }
+    case 'emote': {
       // show it here and pass it on to the other friends
-      if (isIdx(m.i, EMOTES.length) && showEmote(slot, m.i)) send({ t:'emote', p:slot, i:m.i }, slot);
+      const target = m.who === 1 ? seat2[slot] : slot;
+      if (target !== undefined && isIdx(m.i, EMOTES.length) && showEmote(target, m.i)) send({ t:'emote', p:target, i:m.i }, slot);
       break;
+    }
+    case 'two': { // (at most once a second, so it can't be used to keep resetting the menu)
+      const now = performance.now();
+      if (now - (twoSeen[slot] || 0) < 1000) return;
+      twoSeen[slot] = now;
+      hostSetTwo(slot, m.on === true, m);
+      break;
+    }
     case 'ping': {
       const now = performance.now();
       if (!Number.isFinite(m.ts) || now - (pingSeen[slot] || 0) < 300) return;
@@ -1564,9 +1941,9 @@ function onHostData(slot, m) {
 }
 
 // Guest: show the turn right away, then tell the host which move it was meant for
-function guestSteer(dir) {
+function guestSteer(dir, who = 0) {
   if (!connected()) return;
-  const s = snakeOf(mySlot), live = state === 'playing' || state === 'countdown';
+  const s = snakeOf(who ? mySlot2 : mySlot), live = state === 'playing' || state === 'countdown';
   let at = lastN + 1;
   if (live) {
     if (!s || !s.alive) return; // (no snake = watching until the next round)
@@ -1574,9 +1951,9 @@ function guestSteer(dir) {
     if (!queueAt(s, dir, at, lastN)) return; // same or opposite way: nothing would change
   }
   const seq = ++inputSeq;
-  unacked.push({ seq, dir, at });
-  if (unacked.length > 6) unacked.shift();
-  send({ t:'input', dir, seq, at });
+  unacked.push({ seq, dir, at, who });
+  if (unacked.length > 8) unacked.shift();
+  send({ t:'input', dir, seq, at, who });
 }
 
 // Everything from the host is untrusted too: rebuild the state from checked values only
@@ -1606,6 +1983,7 @@ function cleanState(m) {
       countLeft: num(m.countLeft, 0, 5000),
       ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
       you: isIdx(m.you, MAX_PLAYERS) && m.you > 0 ? m.you : 1,
+      you2: isIdx(m.you2, MAX_PLAYERS) && m.you2 > 0 && m.you2 !== m.you ? m.you2 : -1,
       apples: arr(m.apples, 64).map(a => { // (up to 20 apples, 20 poison ones, plus gold/key/shield)
         const o = cellOf(a);
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
@@ -1618,13 +1996,18 @@ function cleanState(m) {
       rocks: arr(m.rocks, cells).map(statueCell),
       statues: arr(m.statues, cells).map(statueCell),
       g: has(GAMES, m.g) && m.g !== 'blender' ? m.g : (c.game === 'blender' ? 'classic' : c.game),
+      bw: int(m.bw, 0, 1e4), bn: int(m.bn, 0, 1000),
+      boss: m.boss && typeof m.boss === 'object' && has(BOSSES, m.boss.kind) && arr(m.boss.body, 40).length ? {
+        kind: m.boss.kind, body: arr(m.boss.body, 40).map(cellOf), dir: dirOr(m.boss.dir, 'left'),
+        max: int(m.boss.max, 1, 99), hp: int(m.boss.hp, 0, 99), stun: int(m.boss.stun, 0, 30), grow: 0, wait: 0,
+      } : null,
       portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
       tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
       ch: has(CHALLENGES, m.ch) ? m.ch : 'apples',
       goal: [0, 1, 2].map(i => int(arr(m.goal, 3)[i], 1, 1e4)),
       el: num(m.el, 0, 1e7),
       skins: DEFAULT_SKINS.map((d, i) => validSkin(arr(m.skins, MAX_PLAYERS)[i], d)),
-      stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells), ch: int(st.ch, 0, 1e6) },
+      stats: { rescues: int(st.rescues, 0, 1e6), teamwork: int(st.teamwork, 0, 1e6), longest: int(st.longest, 0, cells), ch: int(st.ch, 0, 1e6), bosses: int(st.bosses, 0, 1e4) },
       snakes: list.map(s => {
         const body = arr(s.body, cells).map(cellOf);
         if (!body.length) throw new Error('bad body');
@@ -1675,6 +2058,7 @@ function pumpInbox() {
 function applyState(m) {
   const prev = state, now = performance.now();
   challenge = m.ch; goal = m.goal; elapsed = m.el; statues = m.statues;
+  boss = m.boss; bossWave = m.bw; bossNext = m.bn;
   if (m.g !== G) { G = m.g; $('hint').textContent = hintText(); }
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
@@ -1683,9 +2067,11 @@ function applyState(m) {
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
   if (m.you !== mySlot) { mySlot = m.you; renderMenu(); }
   // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
+  if (m.you2 !== mySlot2) { mySlot2 = m.you2; renderMenu(); }
   unacked = unacked.filter(u => u.seq > m.ack);
-  const mine = snakeOf(mySlot);
-  if (mine && mine.alive && (state === 'playing' || state === 'countdown')) for (const u of unacked) {
+  if (state === 'playing' || state === 'countdown') for (const u of unacked) {
+    const mine = snakeOf(u.who ? mySlot2 : mySlot);
+    if (!mine || !mine.alive) continue;
     const r = state === 'playing' && u.at <= m.n ? replayTurn(mine, m.n - u.at + 1, u.dir) : null;
     if (r) { mine.body = r.body; mine.dir = u.dir; mine.log = r.log; }
     else queueAt(mine, u.dir, u.at, m.n);
@@ -2147,6 +2533,81 @@ function drawSnake(s, t, now) {
   ctx.restore();
 }
 
+// The boss: a thick, spiky snake with angry eyes, a glowing tail (its weak spot) and hearts for its health.
+// It moves square by square (it's slower than you, so it doesn't need smooth sliding).
+function drawBoss(now) {
+  const W = COLS * CELL;
+  ctx.save();
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  if (!boss) { // between bosses
+    if (bossNext > 0 && state !== 'ready') {
+      ctx.font = `bold ${CELL * .45}px Roboto, Arial, "Segoe UI Emoji"`;
+      ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, CELL * .8);
+      ctx.fillStyle = '#fff';
+      ctx.fillText(`Next boss: ${BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]].icon} ${BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]].name} in ${Math.ceil(bossNext * TICK / 1000)}…`, W / 2, CELL * .4);
+    }
+    ctx.restore();
+    return;
+  }
+  const B = BOSSES[boss.kind], b = boss.body, n = b.length;
+  const stunned = boss.stun > 0, flash = stunned && Math.floor(now / 90) % 2;
+  const color = flash ? '#ffffff' : B.color, dark = mix(B.color, '#000000', .35);
+  const P = b.map(px);
+  // body: dark outline, then the color, in pieces (so it can wrap across edges)
+  const segs = [];
+  for (let i = 0; i + 1 < n; i++) if (touching(b[i], b[i + 1])) segs.push([P[i], P[i + 1], i]);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const [w, c] of [[CELL * .98, dark], [CELL * .84, color]]) {
+    ctx.strokeStyle = c; ctx.lineWidth = w;
+    for (const [A, C] of segs) { ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(C.x, C.y); ctx.stroke(); }
+    ctx.fillStyle = c;
+    for (const p of P) { ctx.beginPath(); ctx.arc(p.x, p.y, w / 2, 0, Math.PI * 2); ctx.fill(); }
+  }
+  // spikes along the back
+  ctx.fillStyle = dark;
+  for (let i = 1; i < n - 2; i += 2) {
+    const p = P[i], q = P[i + 1] || p, ang = Math.atan2(q.y - p.y, q.x - p.x) + Math.PI / 2;
+    ctx.beginPath();
+    ctx.moveTo(p.x + Math.cos(ang) * CELL * .52, p.y + Math.sin(ang) * CELL * .52);
+    ctx.lineTo(p.x + Math.cos(ang + .5) * CELL * .3, p.y + Math.sin(ang + .5) * CELL * .3);
+    ctx.lineTo(p.x + Math.cos(ang - .5) * CELL * .3, p.y + Math.sin(ang - .5) * CELL * .3);
+    ctx.fill();
+  }
+  // the weak spot: its last two squares glow
+  const glow = .5 + .5 * Math.sin(now / 160);
+  for (let i = Math.max(1, n - 2); i < n; i++) {
+    ctx.strokeStyle = `rgba(255,230,90,${.55 + .4 * glow})`; ctx.lineWidth = CELL * .09;
+    ctx.beginPath(); ctx.arc(P[i].x, P[i].y, CELL * (.32 + .06 * glow), 0, Math.PI * 2); ctx.stroke();
+  }
+  // head: angry eyes looking where it's going
+  const h = P[0], d = DIRS[boss.dir];
+  const ox = -d.y * CELL * .2, oy = d.x * CELL * .2, fx = h.x + d.x * CELL * .1, fy = h.y + d.y * CELL * .1;
+  for (const sgn of [1, -1]) {
+    const ex = fx + ox * sgn, ey = fy + oy * sgn;
+    ctx.fillStyle = '#fff3b0'; ctx.beginPath(); ctx.arc(ex, ey, CELL * .13, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = stunned ? '#555' : '#b00000';
+    ctx.beginPath(); ctx.arc(ex + d.x * CELL * .04, ey + d.y * CELL * .04, CELL * .065, 0, Math.PI * 2); ctx.fill();
+    // eyebrow slanting down toward the middle
+    ctx.strokeStyle = '#1b1b1b'; ctx.lineWidth = CELL * .05;
+    ctx.beginPath();
+    ctx.moveTo(ex - d.x * CELL * .14 + ox * sgn * .35, ey - d.y * CELL * .14 + oy * sgn * .35);
+    ctx.lineTo(ex + d.x * CELL * .1 - ox * sgn * .25, ey + d.y * CELL * .1 - oy * sgn * .25);
+    ctx.stroke();
+  }
+  // health hearts above the head, and a name banner at the top
+  ctx.font = `${CELL * .32}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+  const hearts = '❤'.repeat(boss.hp) + '🖤'.repeat(Math.max(0, boss.max - boss.hp));
+  let hy = h.y - CELL * .85; if (hy < CELL * 1.1) hy = h.y + CELL * .85;
+  ctx.fillText(hearts, Math.min(W - CELL * 1.5, Math.max(CELL * 1.5, h.x)), hy);
+  if (state === 'playing' || state === 'paused') {
+    ctx.font = `bold ${CELL * .38}px Roboto, Arial, "Segoe UI Emoji"`;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(0, 0, W, CELL * .62);
+    ctx.fillStyle = '#fff';
+    ctx.fillText(`${B.icon} ${B.name} — ${B.desc} · boss ${bossWave + 1}`, W / 2, CELL * .32);
+  }
+  ctx.restore();
+}
+
 // Emote bubbles float above each snake's head
 function drawEmotes(now) {
   // Versus: a bobbing crown over whoever is in the lead
@@ -2317,6 +2778,7 @@ function frame(now) {
   }
   snakes.filter(s => !s.alive).forEach(s => drawSnake(s, t, now));
   snakes.filter(s => s.alive).forEach(s => drawSnake(s, t, now));
+  if (G === 'boss') drawBoss(now);
   drawPortals(now, true);
   snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * frameK); });
   drawEffects(frameK);
