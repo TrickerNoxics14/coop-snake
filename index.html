@@ -172,7 +172,7 @@
         </div>
         <!-- Google-style settings: one row of icon dropdowns -->
         <div class="gbar menu-only" id="settings">
-          <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></label>
+          <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></label>
           <label title="Speed"><span>⚡</span><select data-key="speed" aria-label="Speed"><option value="slow">🐢 Slow</option><option value="normal">🐇 Normal</option><option value="fast">⚡ Fast</option></select></label>
           <label title="Board size"><span>▦</span><select data-key="board" aria-label="Board size"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
           <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="blender">Blender</option></select></label>
@@ -228,7 +228,7 @@ const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison
   statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', blender:'Blender' };
 // Blender picks one of these each round
 const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet'];
-const GLIDE_MS = 120; // how fast the head glides onto a new line after a mid-square turn
+const GLIDE_MS = 80; // how fast the head glides onto a new line after a mid-square turn
 const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
 let G = 'classic'; // the mode actually being played this round (differs from cfg.game in Blender)
 // How you play: endless co-op, timed team challenges, or everyone for themselves
@@ -294,13 +294,14 @@ const int = (v, lo, hi) => Math.round(num(v, lo, hi));
 const arr = (v, max) => Array.isArray(v) ? v.slice(0, max) : [];
 const isIdx = (v, len) => Number.isInteger(v) && v >= 0 && v < len;
 
+const APPLE_COUNTS = [1, 2, 3, 5, 10, 20];
 const DEFAULT_CFG = { speed:'normal', apples:2, board:'medium', mode:'walls', game:'classic', play:'coop' };
 // Only ever accept known setting values (from storage or from an online host)
 function validCfg(c) {
   c = c && typeof c === 'object' ? c : {};
   return {
     speed: has(SPEEDS, c.speed) ? c.speed : DEFAULT_CFG.speed,
-    apples: [1, 2, 3, 5].includes(c.apples) ? c.apples : DEFAULT_CFG.apples,
+    apples: APPLE_COUNTS.includes(c.apples) ? c.apples : DEFAULT_CFG.apples,
     board: has(BOARDS, c.board) ? c.board : DEFAULT_CFG.board,
     mode: c.mode === 'wrap' ? 'wrap' : 'walls',
     game: has(GAMES, c.game) ? c.game : DEFAULT_CFG.game,
@@ -514,7 +515,8 @@ function pickChallenge() {
   const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && G === 'peaceful'));
   challenge = ids[Math.random() * ids.length | 0];
   const c = CHALLENGES[challenge], n = snakes.length;
-  const f = c.scale ? (1 + .3 * (n - 2)) * Math.sqrt(SPEEDS.normal / SPEEDS[cfg.speed]) * (cfg.apples === 1 ? .8 : 1) : 1;
+  const f = c.scale ? (1 + .3 * (n - 2)) * Math.sqrt(SPEEDS.normal / SPEEDS[cfg.speed])
+    * (cfg.apples === 1 ? .8 : cfg.apples >= 20 ? 1.6 : cfg.apples >= 10 ? 1.35 : 1) : 1; // lots of apples = easier, so aim higher
   goal = c.stars.map(v => Math.max(1, Math.round(v * f)));
 }
 
@@ -838,7 +840,7 @@ function aheadBlocked(s, dir) {
 
 // Which move a new key press turns on: the square the head is drawn in. Once the head is most of the way
 // into the next square, the turn happens there instead (earlier than that, the head glides back onto the new line).
-const LATE_AT = .65;
+const LATE_AT = .75;
 function turnMove(s, n) {
   const late = !s.queue.length && stepT() >= LATE_AT && !aheadBlocked(s, s.dir);
   return n + 1 + s.queue.length + (late ? 1 : 0);
@@ -1604,7 +1606,7 @@ function cleanState(m) {
       countLeft: num(m.countLeft, 0, 5000),
       ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
       you: isIdx(m.you, MAX_PLAYERS) && m.you > 0 ? m.you : 1,
-      apples: arr(m.apples, 16).map(a => {
+      apples: arr(m.apples, 64).map(a => { // (up to 20 apples, 20 poison ones, plus gold/key/shield)
         const o = cellOf(a);
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
         else if (a && a.poison === true) o.poison = true;
@@ -1857,7 +1859,7 @@ function drawAppleShape(a, now) {
     ctx.fillRect(x + w / 2 - CELL * .1, y + w - CELL * .16, CELL * .2, CELL * .16);
     return;
   }
-  const r = CELL * .36 * (1 + Math.sin(now / (a.gold ? 120 : 250)) * (a.gold ? .07 : .03));
+  const r = CELL * .43 * (1 + Math.sin(now / (a.gold ? 120 : 250)) * (a.gold ? .07 : .03));
   if (a.gold) {
     const g = ctx.createRadialGradient(cx, cy, r * .5, cx, cy, r * 2);
     g.addColorStop(0, 'rgba(255,230,120,.6)'); g.addColorStop(1, 'rgba(255,230,120,0)');
@@ -1970,8 +1972,8 @@ function drawSnake(s, t, now) {
   if (L.glide) {
     const k = (now - L.glide.at) / GLIDE_MS;
     if (k >= 1 || !s.alive) L.glide = null;
-    // (eases in and out, so no single frame jumps)
-    else { const f = 1 - k * k * (3 - 2 * k); pts[0] = { x: raw.x + L.glide.x * f, y: raw.y + L.glide.y * f }; }
+    // (steady speed from the very first frame, so the turn shows straight away without a jump)
+    else { const f = 1 - k; pts[0] = { x: raw.x + L.glide.x * f, y: raw.y + L.glide.y * f }; }
   }
   L.lastB0 = b[0]; L.lastRaw = raw; L.lastTT = tt; L.lastHead = pts[0];
 
