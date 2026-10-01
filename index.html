@@ -1873,17 +1873,18 @@ function drawSnake(s, t, now) {
   if (keep < n) pts.push(toward(b[n - 1], linkNext(b[n - 1], b[n - 2] || b[0]), tt));
 
   // Where the path wraps across an edge, run off that side and back in from the opposite one
-  const runs = [[pts[0]]];
+  // (each point also carries k = how far along the body it is, so the tail can taper)
+  const runs = [[{ ...pts[0], k:0 }]];
   for (let i = 1; i < pts.length; i++) {
-    const a = pts[i - 1], c = pts[i];
+    const a = pts[i - 1], c = { ...pts[i], k:i };
     const gate = Number.isInteger(a.x) && Number.isInteger(a.y) ? portalAt(a) : -1;
     if (gate >= 0 && Math.hypot(a.x - c.x, a.y - c.y) > 1.01 && !(Number.isInteger(c.x) && touching(a, c))) {
       // Went through a portal: this part of the body starts at the entrance portal instead
-      runs.push([portals[gate ^ 1]]);
+      runs.push([{ ...portals[gate ^ 1], k:i - .5 }]);
     } else if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) {
       const w = toward(a, c, 1), dx = w.x - a.x, dy = w.y - a.y;
-      runs[runs.length - 1].push({ x: a.x + dx, y: a.y + dy });
-      runs.push([{ x: c.x - dx, y: c.y - dy }]);
+      runs[runs.length - 1].push({ x: a.x + dx, y: a.y + dy, k:i - .5 });
+      runs.push([{ x: c.x - dx, y: c.y - dy, k:i - .5 }]);
     }
     runs[runs.length - 1].push(c);
   }
@@ -1895,7 +1896,7 @@ function drawSnake(s, t, now) {
     const wy = hp.y > ROWS - 1 ? hp.y - ROWS : hp.y < 0 ? hp.y + ROWS : hp.y;
     if (wx !== hp.x || wy !== hp.y) {
       heads.push({ x: wx, y: wy });
-      runs.push([{ x: wx, y: wy }, { x: wx - d.x, y: wy - d.y }]);
+      runs.push([{ x: wx, y: wy, k:0 }, { x: wx - d.x, y: wy - d.y, k:1 }]);
     }
   }
 
@@ -1908,14 +1909,27 @@ function drawSnake(s, t, now) {
   const hue = id => `hsl(${(id * 22 % 360 + 360) % 360}, 85%, 58%)`;
   const color = !s.alive ? skinDead(s.id) : pattern === 'rainbow' ? hue(s.moves + 1) : skinHex(s.id);
   ctx.strokeStyle = color; ctx.lineWidth = CELL * .78; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  // Like Google's snake, the last few squares get thinner toward the tip of the tail
+  const N = pts.length - 1, T = Math.min(5, N), full = CELL * .78;
+  const widthAt = k => full * (1 - .42 * Math.max(0, (k - (N - T)) / T));
   const strokeRuns = () => {
     for (const run of runs) {
-      const P = run.map(px);
-      ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
-      for (let i = 1; i < P.length; i++) ctx.lineTo(P[i].x, P[i].y);
-      if (P.length === 1) ctx.lineTo(P[0].x + .01, P[0].y);
-      ctx.stroke();
+      const P = run.map(p => ({ ...px(p), k:p.k }));
+      // the thick part as one smooth line, then the tapering tail piece by piece
+      let i = 1;
+      if (P[0].k <= N - T) {
+        ctx.lineWidth = full;
+        ctx.beginPath(); ctx.moveTo(P[0].x, P[0].y);
+        for (; i < P.length && P[i].k <= N - T; i++) ctx.lineTo(P[i].x, P[i].y);
+        if (i === 1) ctx.lineTo(P[0].x + .01, P[0].y);
+        ctx.stroke();
+      }
+      for (let j = Math.max(1, i); j < P.length; j++) {
+        ctx.lineWidth = widthAt((P[j - 1].k + P[j].k) / 2);
+        ctx.beginPath(); ctx.moveTo(P[j - 1].x, P[j - 1].y); ctx.lineTo(P[j].x, P[j].y); ctx.stroke();
+      }
     }
+    ctx.lineWidth = full;
   };
   strokeRuns();
   if (!s.alive && sinceDeath < 320) { // flashes white as it crashes
@@ -1930,7 +1944,7 @@ function drawSnake(s, t, now) {
       const a = pts[j], c = pts[j + 1];
       if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) continue;
       const A = px(a), C = px(c);
-      ctx.strokeStyle = hue(s.moves - j);
+      ctx.strokeStyle = hue(s.moves - j); ctx.lineWidth = widthAt(j + .5);
       ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(C.x, C.y); ctx.stroke();
     }
   } else if (pattern !== 'classic') {
