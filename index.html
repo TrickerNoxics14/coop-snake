@@ -246,15 +246,22 @@ const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison
   statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', boss:'Boss', blender:'Blender' };
 // Blender picks one of these each round
 const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet', 'boss'];
-// Boss mode: the bosses take turns, and each round of four gets tougher.
+// Boss mode: the bosses take turns, and each round through all of them gets tougher.
 // `every` = moves once every this many player moves; `ai` = how it picks where to go.
+// Specials: `phase` = slides right through snakes' bodies, `slime` = leaves a trail that knocks you out
+// for a few seconds, `burrow` = digs underground and pops up somewhere else.
 const BOSSES = {
   chomper: { name:'Chomper', icon:'👹', color:'#d7263d', hp:3, len:7, every:2, ai:'chase', desc:'chases the closest snake' },
   glutton: { name:'Glutton', icon:'🐷', color:'#f08a24', hp:4, len:6, every:2, ai:'apples', desc:'steals your apples' },
   zippy:   { name:'Zippy', icon:'⚡', color:'#8e44ad', hp:3, len:5, every:1, ai:'wander', desc:'fast and twitchy' },
+  phantom: { name:'Phantom', icon:'👻', color:'#7f8fa6', hp:3, len:6, every:2, ai:'chase', phase:true, desc:'floats right through your bodies' },
+  spitter: { name:'Spitter', icon:'🤢', color:'#2e9e44', hp:4, len:7, every:2, ai:'wander', slime:true, desc:'leaves a slime trail — don\'t touch it' },
+  mole:    { name:'Mole', icon:'🕳', color:'#8d5a3b', hp:4, len:6, every:2, ai:'chase', burrow:true, desc:'digs underground and pops up near you' },
   titan:   { name:'Titan', icon:'🗿', color:'#3d4a5c', hp:6, len:11, every:3, ai:'chase', desc:'huge, slow and tough' },
+  king:    { name:'King Cobra', icon:'👑', color:'#c9a227', hp:7, len:9, every:1, ai:'chase', desc:'the fast, final boss' },
 };
-const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'titan'];
+const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king'];
+const SLIME_TICKS = 45, MOLE_DIG_EVERY = 18, MOLE_UNDER = 6;
 const BOSS_HIT_POINTS = 3, BOSS_WIN_POINTS = 10, BOSS_STUN = 6, BOSS_GAP_MS = 3000;
 const GLIDE_MS = 80; // how fast the head glides onto a new line after a mid-square turn
 const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
@@ -476,7 +483,7 @@ function baseHint() {
   if (G === 'light') return "Shared score · It's dark — stay close and keep your eyes open";
   if (G === 'shield') return 'Shared score · A 🛡 shield saves you from one crash';
   if (G === 'magnet') return 'Shared score · Apples near your head get pulled in';
-  if (G === 'boss') return 'Shared score · Bite the boss on its glowing tail — avoid the rest of it!';
+  if (G === 'boss') return bossHint();
   if (G === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
@@ -569,7 +576,7 @@ function pickChallenge() {
 function occupied() {
   const cells = [];
   snakes.forEach(s => s.alive && cells.push(...s.body));
-  return cells.concat(apples, rocks, portals, statues, boss ? boss.body : []);
+  return cells.concat(apples, rocks, portals, statues, bossCells());
 }
 
 const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield).length;
@@ -615,42 +622,69 @@ function settleStatues() {
 
 // ---------- Boss mode ----------
 let boss = null, bossWave = 0, bossNext = 0; // bossNext = moves until the next boss shows up
-const bossAt = p => boss ? boss.body.findIndex(c => eq(c, p)) : -1;
+// Which square of the boss is at p (-1 = none). A boss that's dug underground can't be touched.
+const bossAt = p => boss && !(boss.under > 0) ? boss.body.findIndex(c => eq(c, p)) : -1;
+const bossCells = () => boss && !(boss.under > 0) ? boss.body : [];
 function wrapDist(a, b) {
   let dx = Math.abs(a.x - b.x), dy = Math.abs(a.y - b.y);
   if (cfg.mode === 'wrap') { dx = Math.min(dx, COLS - dx); dy = Math.min(dy, ROWS - dy); }
   return dx + dy;
 }
 
-// A new boss appears in a free row, well away from everyone's heads
-function spawnBoss() {
-  const kind = BOSS_ORDER[bossWave % BOSS_ORDER.length], B = BOSSES[kind];
-  const len = Math.min(B.len, COLS - 3), occ = occupied();
-  const free = p => inBounds(p) && !occ.some(c => eq(c, p));
-  const farFromHeads = p => snakes.every(s => !s.alive || wrapDist(s.body[0], p) > 5);
-  for (let tries = 0; tries < 400; tries++) {
-    const dir = Math.random() < .5 ? 'left' : 'right', d = DIRS[dir];
-    const hx = dir === 'left' ? Math.random() * (COLS - len + 1) | 0 : len - 1 + (Math.random() * (COLS - len + 1) | 0);
-    const y = Math.random() * ROWS | 0;
-    const body = Array.from({ length: len }, (_, i) => ({ x: hx - d.x * i, y }));
-    if (!body.every(free) || !farFromHeads(body[0])) continue;
-    const hp = B.hp + Math.floor(bossWave / BOSS_ORDER.length); // each round of four bosses is tougher
-    boss = { kind, body, dir, hp, max: hp, stun: 4, wait: 0, grow: 0 };
-    for (const c of body) burst(c, B.color, 4, 2.5);
-    popup(body[0], B.name + '!', '#ffd0d0');
-    doShake(); beep(110, .3, 0, 'sawtooth'); beep(82, .4, .2, 'sawtooth');
-    return;
+// Find a free straight line for a boss of length `len`, with its head a good distance from everyone.
+// `near` (optional) = try to put the head about that far from this square (the Mole pops up near you).
+function bossSpot(len, near) {
+  const occ = occupied(), free = p => inBounds(p) && !occ.some(c => eq(c, p));
+  const heads = snakes.filter(s => s.alive).map(s => s.body[0]);
+  for (let tries = 0; tries < 500; tries++) {
+    const dir = ['left', 'right', 'up', 'down'][Math.random() * 4 | 0], d = DIRS[dir];
+    const head = near && tries < 300
+      ? { x: near.x + (Math.random() * 13 | 0) - 6, y: near.y + (Math.random() * 13 | 0) - 6 }
+      : { x: Math.random() * COLS | 0, y: Math.random() * ROWS | 0 };
+    const body = Array.from({ length: len }, (_, i) => ({ x: head.x - d.x * i, y: head.y - d.y * i }));
+    if (!body.every(free) || heads.some(h => wrapDist(h, head) < 5)) continue;
+    // and it shouldn't be facing straight into a wall
+    if (!inBounds(step(head, dir)) && cfg.mode !== 'wrap') continue;
+    return { body, dir };
   }
-  bossNext = 3; // no room right now: try again in a moment
+  return null;
 }
 
-// Can the boss move its head onto p? Walls, rocks, its own body and snakes' bodies block it
-// (it can bite a snake's head, though).
+// A new boss appears, well away from everyone's heads
+function spawnBoss() {
+  const kind = BOSS_ORDER[bossWave % BOSS_ORDER.length], B = BOSSES[kind];
+  const spot = bossSpot(Math.max(3, Math.min(B.len, Math.min(COLS, ROWS) - 2)));
+  if (!spot) { bossNext = 3; return; } // no room right now: try again in a moment
+  const hp = B.hp + Math.floor(bossWave / BOSS_ORDER.length); // each round through all the bosses is tougher
+  boss = { kind, body: spot.body, dir: spot.dir, hp, max: hp, stun: 4, wait: 0, grow: 0, moves: 0, under: 0, dig: MOLE_DIG_EVERY };
+  for (const c of spot.body) burst(c, B.color, 4, 2.5);
+  popup(spot.body[0], B.name.split(' ')[0] + '!', '#ffd0d0');
+  doShake(); beep(110, .3, 0, 'sawtooth'); beep(82, .4, .2, 'sawtooth');
+}
+
+// Can the boss move its head onto p? Walls, rocks and its own body block it, and so do snakes' bodies
+// (unless it's the Phantom). It can bite a snake's head, though.
 function bossCanEnter(p) {
-  if (!inBounds(p) || rocks.some(r => eq(r, p))) return false;
-  const i = bossAt(p);
+  if (!inBounds(p) || rocks.some(r => eq(r, p) && !('slime' in r))) return false;
+  const i = boss.body.findIndex(c => eq(c, p));
   if (i >= 0 && (i < boss.body.length - 1 || boss.grow > 0)) return false;
+  if (BOSSES[boss.kind].phase) return true;
   return !snakes.some(s => s.alive && s.body.some((c, j) => j > 0 && eq(c, p)));
+}
+
+// How much room the boss would have from p (counting up to `limit` squares), so it doesn't
+// steer itself into a dead end and get stuck
+function bossRoom(p, limit) {
+  const seen = new Set([p.x + ',' + p.y]), queue = [p];
+  while (queue.length && seen.size < limit) {
+    const c = queue.shift();
+    for (const d in DIRS) {
+      const n = step(c, d), k = n.x + ',' + n.y;
+      if (seen.has(k) || !bossCanEnter(n)) continue;
+      seen.add(k); queue.push(n);
+    }
+  }
+  return seen.size;
 }
 
 function bossTarget(ai) {
@@ -666,9 +700,9 @@ function knockOut(s) {
   doShake(); beep(160, .25, 0, 'sawtooth');
 }
 
-// The boss takes a hit (bitten on the tail by snake `by`, or boxed in so it can't move)
+// The boss takes a hit (bitten by snake `by` at square `cut`, or boxed in so it can't move)
 function hurtBoss(by, label, cut) {
-  const B = BOSSES[boss.kind], tail = boss.body[boss.body.length - 1];
+  const B = BOSSES[boss.kind], tail = cut !== undefined ? boss.body[cut] : boss.body[boss.body.length - 1];
   boss.hp--; boss.stun = BOSS_STUN;
   // a bite takes the tail off from where it was bitten (it grows back a little)
   if (cut !== undefined) { boss.body.length = Math.max(1, cut); boss.grow += 2; }
@@ -681,19 +715,43 @@ function hurtBoss(by, label, cut) {
   popup(boss.body[0], 'Defeated!', '#ffe680');
   score += BOSS_WIN_POINTS; if (by) by.apples += BOSS_WIN_POINTS;
   stats.bosses++; bossWave++;
+  rocks = rocks.filter(r => !('slime' in r)); // its slime goes with it
   boss = null; bossNext = Math.round(BOSS_GAP_MS / TICK);
   beep(523, .1); beep(659, .1, .1); beep(784, .1, .2); beep(1047, .25, .3);
 }
 
+// The Mole: dig in (it's untouchable underground), then pop up near a snake
+function moleTick() {
+  if (boss.under > 0) {
+    if (--boss.under > 0) return true;
+    const spot = bossSpot(boss.body.length, boss.pop);
+    if (spot) { boss.body = spot.body; boss.dir = spot.dir; }
+    boss.stun = 2; boss.dig = MOLE_DIG_EVERY;
+    for (const c of boss.body) burst(c, '#8d5a3b', 5, 3);
+    popup(boss.body[0], 'Pop!', '#ffd0a0'); doShake(); beep(140, .15, 0, 'triangle');
+    return true;
+  }
+  if (--boss.dig > 0) return false;
+  // dig in: it'll come up close to whoever is nearest
+  boss.under = MOLE_UNDER;
+  boss.pop = bossTarget('chase') || boss.body[0];
+  for (const c of boss.body) burst(c, '#8d5a3b', 4, 2);
+  beep(90, .2, 0, 'triangle');
+  return true;
+}
+
 // The boss's move (after the snakes have moved)
 function bossTick() {
+  // slime dries up after a while
+  if (rocks.some(r => 'slime' in r)) rocks = rocks.filter(r => !('slime' in r) || --r.slime > 0);
   if (!boss) { if (bossNext > 0 && --bossNext === 0) spawnBoss(); return; }
   if (boss.stun > 0) { boss.stun--; return; }
   const B = BOSSES[boss.kind];
   if (++boss.wait < B.every) return;
   boss.wait = 0;
+  if (B.burrow && moleTick()) return;
   const h = boss.body[0];
-  const opts = Object.keys(DIRS).filter(d => d !== OPP[boss.dir] && bossCanEnter(step(h, d)));
+  let opts = Object.keys(DIRS).filter(d => d !== OPP[boss.dir] && bossCanEnter(step(h, d)));
   if (!opts.length) { // boxed in! It gets hurt and turns around
     hurtBoss(null, 'Trapped!');
     if (boss) {
@@ -702,6 +760,11 @@ function bossTick() {
     }
     return;
   }
+  // Don't head into a dead end: prefer ways with enough room for the whole boss
+  const need = boss.body.length + 3, room = {};
+  for (const d of opts) room[d] = bossRoom(step(h, d), need);
+  const roomy = opts.filter(d => room[d] >= need);
+  opts = roomy.length ? roomy : [opts.sort((a, b) => room[b] - room[a])[0]];
   const target = bossTarget(B.ai);
   let dir;
   if (!target || Math.random() < (B.ai === 'wander' ? .35 : .15)) // a bit of randomness so it's not perfect
@@ -709,8 +772,12 @@ function bossTick() {
   else dir = opts.sort((a, b) => wrapDist(step(h, a), target) - wrapDist(step(h, b), target))[0];
   boss.dir = dir;
   const nh = step(h, dir);
-  boss.body.unshift(nh);
-  if (boss.grow > 0) boss.grow--; else boss.body.pop();
+  boss.body.unshift(nh); boss.moves++;
+  const tail = boss.grow > 0 ? null : boss.body.pop();
+  if (boss.grow > 0) boss.grow--;
+  // the Spitter leaves slime behind it every other move
+  if (B.slime && tail && boss.moves % 2 === 0 && rocks.filter(r => 'slime' in r).length < 30)
+    rocks.push({ x: tail.x, y: tail.y, slime: SLIME_TICKS });
   for (const s of snakes) if (s.alive && eq(s.body[0], nh)) { knockOut(s); popup(nh, 'Chomp!', '#ffb3b3'); }
   const ai = apples.findIndex(a => eq(a, nh));
   if (ai >= 0) { // it eats the apple (and grows)
@@ -798,7 +865,9 @@ function respawnSnake(s) {
     const dir = x < COLS / 2 ? 'right' : 'left', d = DIRS[dir];
     const body = [0,1,2].map(i => ({ x: x - d.x * i, y }));
     const ahead = [1,2,3].map(i => ({ x: x + d.x * i, y }));
-    if (body.every(isFree) && ahead.every(isFree)) {
+    // (and not right next to a boss's head, so you don't get bitten the moment you're back)
+    const awayFromBoss = !boss || tries > 350 || wrapDist(body[0], boss.body[0]) > 5;
+    if (body.every(isFree) && ahead.every(isFree) && awayFromBoss) {
       Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0 });
       burst(body[0], skinHex(s.id), 16, 3);
       beep(520, .08); beep(780, .1, .08);
@@ -849,15 +918,20 @@ function tick() {
     if (s.pending > 0) { s.pending--; s.popped = null; } else s.popped = s.body.pop();
   }
   // Boss mode: biting the boss's tail (its last two squares) hurts it
+  // (a boss that's down to its last couple of squares is all tail, so you can always finish it off)
+  for (const s of movers) s.bitBoss = false;
   if (boss) for (const s of movers) {
     const i = bossAt(s.body[0]);
-    if (i >= 1 && i >= boss.body.length - 2) hurtBoss(s, 'Hit! +' + BOSS_HIT_POINTS, i);
+    if (i >= 0 && (i >= 1 && i >= boss.body.length - 2 || boss.body.length <= 2)) {
+      s.bitBoss = true; // (so biting it doesn't also count as crashing into it)
+      hurtBoss(s, 'Hit! +' + BOSS_HIT_POINTS, i);
+    }
     if (!boss) break;
   }
   const crashed = peaceful ? [] : movers.filter(s => {
     const h = s.body[0];
     return !inBounds(h)
-      || bossAt(h) >= 0
+      || (bossAt(h) >= 0 && !s.bitBoss)
       || rocks.some(r => eq(r, h))
       || (s.appleIdx >= 0 && (apples[s.appleIdx].poison || apples[s.appleIdx].locked))
       || s.body.some((c, i) => i > 0 && eq(c, h))
@@ -1126,6 +1200,7 @@ function updateHud() {
     const c = CHALLENGES[challenge], st = starsOf(stats.ch);
     $('goal').innerHTML = `${c.icon} ${stats.ch}/${goal[Math.min(2, st)]}${c.unit || ''} <span class="stars">${starText(st)}</span>`;
   }
+  if (G === 'boss' && role !== 'guest') $('hint').textContent = hintText(); // (who's the boss right now)
   if (cfg.play === 'coop' && score > best) {
     best = score; $('best').textContent = best;
     try { localStorage.setItem(bestKey(), best); } catch (e) {}
@@ -1893,7 +1968,8 @@ function sendState() {
   const m = {
     t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
     ch: challenge, goal, el: elapsed, g: G, statues, bw: bossWave, bn: bossNext,
-    boss: boss && { kind: boss.kind, body: boss.body, dir: boss.dir, hp: boss.hp, max: boss.max, stun: boss.stun },
+    boss: boss && { kind: boss.kind, body: boss.body, dir: boss.dir, hp: boss.hp, max: boss.max, stun: boss.stun,
+      under: boss.under || 0, pop: boss.under > 0 ? boss.pop : null },
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone,
@@ -1988,7 +2064,12 @@ function cleanState(m) {
     const [cols, rows] = BOARDS[c.board], cells = cols * rows;
     const cellOf = p => ({ x: int(p && p.x, 0, cols - 1), y: int(p && p.y, 0, rows - 1) });
     // a rock that's part of a player's statue remembers whose (for its color)
-    const statueCell = p => { const o = cellOf(p); if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue; return o; };
+    const statueCell = p => {
+      const o = cellOf(p);
+      if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue;
+      else if (p && Number.isFinite(p.slime)) o.slime = int(p.slime, 1, 200); // a boss's slime puddle
+      return o;
+    };
     const list = arr(m.snakes, MAX_PLAYERS);
     if (!list.length) return null;
     // every snake needs its own player slot 0–3
@@ -2021,6 +2102,7 @@ function cleanState(m) {
       boss: m.boss && typeof m.boss === 'object' && has(BOSSES, m.boss.kind) && arr(m.boss.body, 40).length ? {
         kind: m.boss.kind, body: arr(m.boss.body, 40).map(cellOf), dir: dirOr(m.boss.dir, 'left'),
         max: int(m.boss.max, 1, 99), hp: int(m.boss.hp, 0, 99), stun: int(m.boss.stun, 0, 30), grow: 0, wait: 0,
+        under: int(m.boss.under, 0, 50), pop: m.boss.pop ? cellOf(m.boss.pop) : null,
       } : null,
       portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
       tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
@@ -2198,7 +2280,24 @@ function drawStatue(r, now, ghost) {
   ctx.globalAlpha = 1;
 }
 
+// A boss's slime: a bubbling green puddle that fades away as it dries up
+function drawSlime(r, now) {
+  const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL, a = Math.min(1, r.slime / 12);
+  ctx.globalAlpha = .85 * a;
+  ctx.fillStyle = '#7cf06a'; ctx.strokeStyle = '#1d6b28'; ctx.lineWidth = CELL * .07; // (outlined so it stands out on the grass)
+  ctx.beginPath(); ctx.ellipse(cx, cy, CELL * .44, CELL * .36, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#2f9e3a';
+  ctx.beginPath(); ctx.ellipse(cx + CELL * .08, cy + CELL * .06, CELL * .26, CELL * .2, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = 'rgba(255,255,255,.55)'; // little bubbles
+  for (let k = 0; k < 2; k++) {
+    const b = (now / 600 + k * .5 + r.x * .3) % 1;
+    ctx.beginPath(); ctx.arc(cx - CELL * .15 + k * CELL * .25, cy - b * CELL * .2, CELL * .05 * (1 - b), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
 function drawRock(r, now) {
+  if (r.slime !== undefined) return drawSlime(r, now);
   if (r.statue !== undefined) return drawStatue(r, now, false);
   const key = r.x + ',' + r.y;
   if (!rockBorn.has(key)) rockBorn.set(key, now);
@@ -2555,28 +2654,44 @@ function drawSnake(s, t, now) {
 }
 
 // The boss: a thick, spiky snake with angry eyes, a glowing tail (its weak spot) and hearts for its health.
-// It moves square by square (it's slower than you, so it doesn't need smooth sliding).
+// Each time it moves it slides smoothly into its new squares (like your snakes do).
+const bossAnim = { body: null, from: null, at: 0 };
 function drawBoss(now) {
-  const W = COLS * CELL;
+  if (!boss) { bossAnim.body = null; return; }
+  const B = BOSSES[boss.kind], b = boss.body, n = b.length;
   ctx.save();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  if (!boss) { // between bosses
-    if (bossNext > 0 && state !== 'ready') {
-      ctx.font = `bold ${CELL * .45}px Roboto, Arial, "Segoe UI Emoji"`;
-      ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, CELL * .8);
-      ctx.fillStyle = '#fff';
-      ctx.fillText(`Next boss: ${BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]].icon} ${BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]].name} in ${Math.ceil(bossNext * TICK / 1000)}…`, W / 2, CELL * .4);
-    }
+  if (boss.under > 0) { // dug in: a rumbling dirt mound shows where it's about to pop up
+    const p = boss.pop || b[0], c = px(p), pulse = .5 + .5 * Math.sin(now / 90);
+    ctx.globalAlpha = .55 + .3 * pulse;
+    ctx.fillStyle = '#6b4226';
+    ctx.beginPath(); ctx.ellipse(c.x, c.y + CELL * .1, CELL * (.45 + .1 * pulse), CELL * .3, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#ffcf66'; ctx.lineWidth = CELL * .06; ctx.setLineDash([CELL * .15, CELL * .12]);
+    ctx.beginPath(); ctx.arc(c.x, c.y, CELL * (1.1 + .15 * pulse), 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1; ctx.font = `bold ${CELL * .5}px Roboto, Arial`; ctx.fillStyle = '#ffcf66';
+    ctx.fillText('!', c.x, c.y - CELL * .05);
     ctx.restore();
+    bossAnim.body = null;
     return;
   }
-  const B = BOSSES[boss.kind], b = boss.body, n = b.length;
+  // Slide from where each square was drawn before (skipped after a jump: popping up, turning around, wrapping)
+  if (!bossAnim.body || bossAnim.body[0].x !== b[0].x || bossAnim.body[0].y !== b[0].y || bossAnim.body.length !== n) {
+    const old = bossAnim.body;
+    bossAnim.from = old && touching(old[0], b[0]) ? old.map(c => ({ ...c })) : null;
+    bossAnim.body = b.map(c => ({ ...c })); bossAnim.at = now;
+  }
+  const k = Math.min(1, (now - bossAnim.at) / TICK), from = bossAnim.from;
+  const P = b.map((c, i) => {
+    const f = from && (from[i] || from[from.length - 1]);
+    return px(f && touching(f, c) ? toward(f, c, k) : c);
+  });
   const stunned = boss.stun > 0, flash = stunned && Math.floor(now / 90) % 2;
   const color = flash ? '#ffffff' : B.color, dark = mix(B.color, '#000000', .35);
-  const P = b.map(px);
+  if (B.phase) ctx.globalAlpha = .55 + .15 * Math.sin(now / 300); // the Phantom is see-through
   // body: dark outline, then the color, in pieces (so it can wrap across edges)
   const segs = [];
-  for (let i = 0; i + 1 < n; i++) if (touching(b[i], b[i + 1])) segs.push([P[i], P[i + 1], i]);
+  for (let i = 0; i + 1 < n; i++) if (touching(b[i], b[i + 1])) segs.push([P[i], P[i + 1]]);
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const [w, c] of [[CELL * .98, dark], [CELL * .84, color]]) {
     ctx.strokeStyle = c; ctx.lineWidth = w;
@@ -2584,7 +2699,7 @@ function drawBoss(now) {
     ctx.fillStyle = c;
     for (const p of P) { ctx.beginPath(); ctx.arc(p.x, p.y, w / 2, 0, Math.PI * 2); ctx.fill(); }
   }
-  // spikes along the back
+  // spikes along the back (the King Cobra gets a crown instead)
   ctx.fillStyle = dark;
   for (let i = 1; i < n - 2; i += 2) {
     const p = P[i], q = P[i + 1] || p, ang = Math.atan2(q.y - p.y, q.x - p.x) + Math.PI / 2;
@@ -2594,9 +2709,9 @@ function drawBoss(now) {
     ctx.lineTo(p.x + Math.cos(ang - .5) * CELL * .3, p.y + Math.sin(ang - .5) * CELL * .3);
     ctx.fill();
   }
-  // the weak spot: its last two squares glow
+  // the weak spot: its last two squares glow (all of it, once it's tiny)
   const glow = .5 + .5 * Math.sin(now / 160);
-  for (let i = Math.max(1, n - 2); i < n; i++) {
+  for (let i = n <= 2 ? 0 : n - 2; i < n; i++) {
     ctx.strokeStyle = `rgba(255,230,90,${.55 + .4 * glow})`; ctx.lineWidth = CELL * .09;
     ctx.beginPath(); ctx.arc(P[i].x, P[i].y, CELL * (.32 + .06 * glow), 0, Math.PI * 2); ctx.stroke();
   }
@@ -2615,18 +2730,23 @@ function drawBoss(now) {
     ctx.lineTo(ex + d.x * CELL * .1 - ox * sgn * .25, ey + d.y * CELL * .1 - oy * sgn * .25);
     ctx.stroke();
   }
-  // health hearts above the head, and a name banner at the top
+  if (boss.kind === 'king') { // a little crown
+    ctx.globalAlpha = 1; ctx.font = `${CELL * .45}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
+    ctx.fillText('👑', h.x - d.x * CELL * .1, h.y - CELL * .5);
+  }
+  // health hearts above the head (the name and what it does are shown under the board)
+  ctx.globalAlpha = 1;
   ctx.font = `${CELL * .32}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
   const hearts = '❤'.repeat(boss.hp) + '🖤'.repeat(Math.max(0, boss.max - boss.hp));
-  let hy = h.y - CELL * .85; if (hy < CELL * 1.1) hy = h.y + CELL * .85;
-  ctx.fillText(hearts, Math.min(W - CELL * 1.5, Math.max(CELL * 1.5, h.x)), hy);
-  if (state === 'playing' || state === 'paused') {
-    ctx.font = `bold ${CELL * .38}px Roboto, Arial, "Segoe UI Emoji"`;
-    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.fillRect(0, 0, W, CELL * .62);
-    ctx.fillStyle = '#fff';
-    ctx.fillText(`${B.icon} ${B.name} — ${B.desc} · boss ${bossWave + 1}`, W / 2, CELL * .32);
-  }
+  let hy = h.y - CELL * .9; if (hy < CELL * .35) hy = h.y + CELL * .9;
+  ctx.fillText(hearts, Math.min(COLS * CELL - CELL * 1.5, Math.max(CELL * 1.5, h.x)), hy);
   ctx.restore();
+}
+// Boss mode's line under the board: who you're fighting, or who's coming next
+function bossHint() {
+  if (boss) { const B = BOSSES[boss.kind]; return `${B.icon} ${B.name} — ${B.desc} · boss ${bossWave + 1} · bite its glowing tail!`; }
+  const B = BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]];
+  return bossNext > 0 && state !== 'ready' ? `Next boss: ${B.icon} ${B.name} in ${Math.ceil(bossNext * TICK / 1000)}s…` : 'Bite the boss on its glowing tail — avoid the rest of it!';
 }
 
 // Emote bubbles float above each snake's head
