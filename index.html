@@ -93,6 +93,12 @@
   .bigscore { display:flex; gap:34px; justify-content:center; margin:2px 0 6px; }
   .bigscore span { display:flex; flex-direction:column; align-items:center; font-size:40px; line-height:1.1; }
   .bigscore b { font-size:30px; }
+  .gbar { display:flex; gap:8px; flex-wrap:wrap; justify-content:center; max-width:460px; }
+  .gbar label { display:flex; align-items:center; gap:4px; background:rgba(0,0,0,.3); border-radius:8px; padding:5px 8px; font-size:18px; cursor:pointer; }
+  .gbar select { background:transparent; color:#fff; border:0; font:inherit; font-size:14px; font-weight:600; outline:none; cursor:pointer; }
+  .gbar select:disabled { opacity:.6; cursor:default; }
+  .gbar option { color:#222; }
+  .extras { display:flex; gap:14px; justify-content:center; }
   .stars { color:#ffe680; letter-spacing:1px; }
   .hud .low { color:#ffd0c8; }
   .rank { display:flex; gap:8px 14px; flex-wrap:wrap; justify-content:center; font-size:16px; margin:4px 0; }
@@ -164,29 +170,29 @@
           <div class="status" id="onStatus"></div>
           <button class="link" id="leaveBtn" hidden>Leave online game</button>
         </div>
-        <div class="keys menu-only" id="keys"></div>
-        <button class="btn2 menu-only" id="skinBtn">🎨 Snake looks</button>
-        <div class="skins menu-only" id="skinPanel" hidden></div>
-        <div class="settings menu-only" id="settings">
-          <span>Play</span>
-          <div class="seg" data-key="play"><button data-v="coop">Co-op</button><button data-v="challenge">Challenges</button><button data-v="versus">Versus</button></div>
-          <span>Mode</span>
-          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button><button data-v="statue">Statue</button><button data-v="reverse">Reverse</button><button data-v="key">Key</button><button data-v="blender">Blender</button></div>
-          <span>Speed</span>
-          <div class="seg" data-key="speed"><button data-v="slow">🐢 Slow</button><button data-v="normal">🐇 Normal</button><button data-v="fast">⚡ Fast</button></div>
-          <span>Apples</span>
-          <div class="seg" data-key="apples"><button data-v="1">🍎 1</button><button data-v="2">🍎 2</button><button data-v="3">🍎 3</button><button data-v="5">🍎 5</button></div>
-          <span>Board</span>
-          <div class="seg" data-key="board"><button data-v="small">Small</button><button data-v="medium">Medium</button><button data-v="large">Large</button></div>
-          <span>Edges</span>
-          <div class="seg" data-key="mode"><button data-v="walls">Walls</button><button data-v="wrap">Wrap around</button></div>
-          <div class="mode-desc" id="modeDesc"></div>
+        <!-- Google-style settings: one row of icon dropdowns -->
+        <div class="gbar menu-only" id="settings">
+          <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option></select></label>
+          <label title="Speed"><span>⚡</span><select data-key="speed" aria-label="Speed"><option value="slow">🐢 Slow</option><option value="normal">🐇 Normal</option><option value="fast">⚡ Fast</option></select></label>
+          <label title="Board size"><span>▦</span><select data-key="board" aria-label="Board size"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
+          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="blender">Blender</option></select></label>
+          <label title="Edges"><span>🧱</span><select data-key="mode" aria-label="Edges"><option value="walls">Walls</option><option value="wrap">Wrap around</option></select></label>
+          <label title="How to play"><span>👥</span><select data-key="play" aria-label="How to play"><option value="coop">Co-op</option><option value="challenge">Challenges</option><option value="versus">Versus</option></select></label>
         </div>
+        <div class="mode-desc menu-only" id="modeDesc"></div>
         <div class="btns">
           <button class="btn" id="play">Play</button>
           <button class="btn secondary paused-only" id="quit">End game</button>
         </div>
-        <p class="small menu-only" id="help"></p>
+        <div class="extras menu-only">
+          <button class="link" id="skinBtn">🎨 Snake looks</button>
+          <button class="link" id="helpBtn">❓ Controls</button>
+        </div>
+        <div class="skins menu-only" id="skinPanel" hidden></div>
+        <div class="menu-only" id="helpBox" hidden>
+          <div class="keys" id="keys"></div>
+          <p class="small" id="help"></p>
+        </div>
       </div>
     </div>
   </div>
@@ -202,7 +208,7 @@
 <script>
 // ---------- Config ----------
 const SPEEDS = { slow:180, normal:135, fast:95 };
-const BOARDS = { small:[11,10], medium:[17,15], large:[24,21] };
+const BOARDS = { small:[10,9], medium:[17,15], large:[24,21] };
 const GAMES = {
   classic: "Crash and you're out for 3 seconds. If you're both down at once, it's game over.",
   maze: 'Every apple you eat drops a rock somewhere on the board. How long can you survive?',
@@ -271,8 +277,9 @@ const GOLD_EVERY = 8, GOLD_MS = 6000, GOLD_POINTS = 5, GOLD_GROW = 3;
 const TEAM_MS = 1500, TEAM_BONUS = 2, ROCK_MAX = .16, EMOTE_MS = 2200;
 // How far back (in time) a late key press from an online friend can still count
 const REWIND_MS = 450;
-const INTRO = `Eat apples together for one shared score.<br>
-  Crash and you're back in 3s — or instantly when your teammate eats an apple.<br>
+// Kept short like Google's start screen; the details are under "❓ Controls"
+const INTRO = 'Eat apples together for one shared score!';
+const INTRO_MORE = `Crash and you're back in 3s — or instantly when your teammate eats an apple.
   Eat within a moment of each other for a 🤝 teamwork bonus!`;
 
 // Helpers for checking untrusted values (saved settings, and everything that comes over the network)
@@ -433,9 +440,7 @@ function applyConfig() {
   RESPAWN_TICKS = Math.round(3000 / TICK);
   canvas.width = COLS * CELL * dpr; canvas.height = ROWS * CELL * dpr;
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  document.querySelectorAll('.seg[data-key]').forEach(seg => {
-    seg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === String(cfg[seg.dataset.key])));
-  });
+  document.querySelectorAll('select[data-key]').forEach(sel => { sel.value = String(cfg[sel.dataset.key]); });
   // (Classic's "game over if you're both down" doesn't apply in versus)
   $('modeDesc').textContent = cfg.play === 'versus' && cfg.game === 'classic' ? PLAYS.versus
     : [PLAYS[cfg.play], GAMES[cfg.game]].filter(Boolean).join(' ');
@@ -883,7 +888,7 @@ function updateHud() {
   $('score').textContent = score;
   for (let id = 0; id < MAX_PLAYERS; id++) {
     const s = snakeOf(id);
-    $('pl' + (id + 1)).hidden = !s;
+    $('pl' + (id + 1)).hidden = !s || state === 'ready'; // like Google, the menu's top bar is just 🍎 and 🏆
     if (!s) continue;
     const down = !s.alive && state !== 'over';
     $('p' + (id + 1)).textContent = s.gone ? `${s.apples} · left` : down ? `${s.apples} · back in ${Math.ceil(s.respawn * TICK / 1000)}s` : s.apples;
@@ -915,6 +920,7 @@ function beginGame() {
   reset();
   bestAtStart = best;
   state = 'countdown'; countEnd = performance.now() + 1800; lastCount = 0;
+  updateHud();
   overlay.classList.add('hidden');
   sendState();
 }
@@ -1128,12 +1134,11 @@ $('emoteBar').addEventListener('click', e => {
   pressEmote(me(), +b.dataset.e);
 });
 
-document.querySelectorAll('.seg[data-key]').forEach(seg => seg.addEventListener('click', e => {
-  const b = e.target.closest('button');
-  if (!b || role === 'guest') return;
-  b.blur();
-  const k = seg.dataset.key;
-  cfg = validCfg({ ...cfg, [k]: k === 'apples' ? +b.dataset.v : b.dataset.v });
+document.querySelectorAll('select[data-key]').forEach(sel => sel.addEventListener('change', () => {
+  sel.blur(); // so the arrow keys steer the snake again instead of changing the dropdown
+  if (role === 'guest') return;
+  const k = sel.dataset.key;
+  cfg = validCfg({ ...cfg, [k]: k === 'apples' ? +sel.value : sel.value });
   try { localStorage.setItem('coopSnakeCfg', JSON.stringify(cfg)); } catch (err) {}
   reset();
   sendState();
@@ -1235,6 +1240,12 @@ function setSkin(slot, k) {
   applySkins();
 }
 
+$('helpBtn').addEventListener('click', e => {
+  e.currentTarget.blur();
+  $('helpBox').hidden = !$('helpBox').hidden;
+  $('helpBtn').textContent = $('helpBox').hidden ? '❓ Controls' : '✓ Done';
+  fit();
+});
 $('skinBtn').addEventListener('click', e => {
   e.currentTarget.blur();
   const open = $('skinPanel').hidden;
@@ -1258,16 +1269,16 @@ function renderMenu() {
   $('onIdle').hidden = role !== 'local';
   $('leaveBtn').hidden = role === 'local';
   $('play').hidden = online && !on;
-  $('settings').classList.toggle('locked', role === 'guest');
+  document.querySelectorAll('select[data-key]').forEach(sel => { sel.disabled = role === 'guest'; });
   $('keys').hidden = online && !on;
   $('keys').innerHTML = online
     ? `<div>${youAre()} · steer with W A S D or arrows · emotes 1–4</div>`
     : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D · emotes 1–4</div>
        <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys · emotes 7–0</div>`;
   const common = 'Space pause · M mute · F fullscreen · 🎮 controllers work too';
-  $('help').innerHTML = !online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
+  $('help').innerHTML = (cfg.play === 'coop' ? INTRO_MORE + '<br>' : '') + (!online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
     : role === 'guest' ? `The host picks the settings · ${common}`
-    : `You pick the settings · ${common}`;
+    : `You pick the settings · ${common}`);
   for (let i = 0; i < MAX_PLAYERS; i++) $('pn' + (i + 1)).textContent = playerName(i);
   $('emoteBar').hidden = !(role !== 'local' && on);
   renderSkinPanel();
@@ -1924,13 +1935,18 @@ function drawSnake(s, t, now) {
         if (i === 1) ctx.lineTo(P[0].x + .01, P[0].y);
         ctx.stroke();
       }
-      for (let j = Math.max(1, i); j < P.length; j++) {
-        ctx.lineWidth = widthAt((P[j - 1].k + P[j].k) / 2);
-        ctx.beginPath(); ctx.moveTo(P[j - 1].x, P[j - 1].y); ctx.lineTo(P[j].x, P[j].y); ctx.stroke();
-      }
+      for (let j = Math.max(1, i); j < P.length; j++) taperSeg(P[j - 1], P[j], P[j - 1].k, P[j].k);
     }
     ctx.lineWidth = full;
   };
+  // One thinning piece of body: flat ends, plus a round joint exactly as wide as the body there (so no bumps)
+  function taperSeg(A, C, ka, kc) {
+    ctx.lineCap = 'butt'; ctx.lineWidth = widthAt((ka + kc) / 2);
+    ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(C.x, C.y); ctx.stroke();
+    ctx.lineCap = 'round';
+    ctx.fillStyle = ctx.strokeStyle;
+    for (const [p, k] of [[A, ka], [C, kc]]) { ctx.beginPath(); ctx.arc(p.x, p.y, widthAt(k) / 2, 0, Math.PI * 2); ctx.fill(); }
+  }
   strokeRuns();
   if (!s.alive && sinceDeath < 320) { // flashes white as it crashes
     const a = ctx.globalAlpha;
@@ -1938,14 +1954,15 @@ function drawSnake(s, t, now) {
     strokeRuns();
     ctx.globalAlpha = a; ctx.strokeStyle = color;
   }
-  if (pattern === 'rainbow') {
-    // Color each piece of the body by its square's number
+  // Rainbow colors each piece by its square's number; Classic shades gently darker toward the tail, like Google's snake
+  const shade = pattern === 'classic' && s.alive && ctx.globalAlpha === 1;
+  if (pattern === 'rainbow' || shade) {
     for (let j = 0; j + 1 < pts.length; j++) {
       const a = pts[j], c = pts[j + 1];
       if (Math.abs(a.x - c.x) > 1.5 || Math.abs(a.y - c.y) > 1.5) continue;
       const A = px(a), C = px(c);
-      ctx.strokeStyle = hue(s.moves - j); ctx.lineWidth = widthAt(j + .5);
-      ctx.beginPath(); ctx.moveTo(A.x, A.y); ctx.lineTo(C.x, C.y); ctx.stroke();
+      ctx.strokeStyle = shade ? mix(color, '#1a2a6c', .32 * (j + .5) / N) : hue(s.moves - j);
+      taperSeg(A, C, j, j + 1);
     }
   } else if (pattern !== 'classic') {
     const base = skinHex(s.id);
