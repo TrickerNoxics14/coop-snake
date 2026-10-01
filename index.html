@@ -90,6 +90,9 @@
   .stats { display:flex; gap:6px; flex-wrap:wrap; justify-content:center; margin-top:10px; }
   .stats span { background:rgba(0,0,0,.3); padding:4px 10px; border-radius:999px; font-size:13px; }
   .small { font-size:12px !important; opacity:.75; }
+  .bigscore { display:flex; gap:34px; justify-content:center; margin:2px 0 6px; }
+  .bigscore span { display:flex; flex-direction:column; align-items:center; font-size:40px; line-height:1.1; }
+  .bigscore b { font-size:30px; }
   .stars { color:#ffe680; letter-spacing:1px; }
   .hud .low { color:#ffd0c8; }
   .rank { display:flex; gap:8px 14px; flex-wrap:wrap; justify-content:center; font-size:16px; margin:4px 0; }
@@ -951,7 +954,7 @@ function showGameOver() {
   const isBest = score > 0 && score > bestAtStart;
   if (isBest) fanfare();
   showOverlay(isBest ? 'New best! 🏆' : G === 'peaceful' ? 'Well played!' : 'Game over',
-    `You scored <b>${score}</b> together!<br>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
+    `<span class="bigscore"><span>🍎<b>${score}</b></span><span>🏆<b>${best}</b></span></span>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
      <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
     'Play again');
@@ -1031,7 +1034,12 @@ function spaceAction() {
 }
 
 function steer(player, dir) {
-  if (state === 'ready' || state === 'over') { if (!canRestart()) return; beginGame(); }
+  if (state === 'ready' || state === 'over') {
+    if (!canRestart()) return;
+    beginGame();
+    // Like Google's snake: on one keyboard, the first arrow press starts straight away (no countdown)
+    if (role === 'local') countEnd = performance.now();
+  }
   if (state !== 'playing' && state !== 'countdown') return;
   const s = snakeOf(player);
   if (s && s.alive) queueAt(s, dir, turnMove(s, tickNo), tickNo);
