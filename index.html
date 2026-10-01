@@ -173,9 +173,9 @@
           <span>Mode</span>
           <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button><button data-v="statue">Statue</button><button data-v="reverse">Reverse</button><button data-v="key">Key</button><button data-v="blender">Blender</button></div>
           <span>Speed</span>
-          <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
+          <div class="seg" data-key="speed"><button data-v="slow">🐢 Slow</button><button data-v="normal">🐇 Normal</button><button data-v="fast">⚡ Fast</button></div>
           <span>Apples</span>
-          <div class="seg" data-key="apples"><button data-v="1">1</button><button data-v="2">2</button><button data-v="3">3</button><button data-v="5">5</button></div>
+          <div class="seg" data-key="apples"><button data-v="1">🍎 1</button><button data-v="2">🍎 2</button><button data-v="3">🍎 3</button><button data-v="5">🍎 5</button></div>
           <span>Board</span>
           <div class="seg" data-key="board"><button data-v="small">Small</button><button data-v="medium">Medium</button><button data-v="large">Large</button></div>
           <span>Edges</span>
@@ -737,8 +737,8 @@ function eatApple(s, a) {
   stats.eaten++; if (a.gold) stats.golds++;
   burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
   popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
-  if (a.gold) { beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
-  else { beep(880, .06); beep(1320, .07, .05); if (++goldCounter >= (cfg.play === 'challenge' && challenge === 'gold' ? 2 : GOLD_EVERY)) goldCounter = -1; }
+  if (a.gold) { crunch(); beep(880, .06); beep(1175, .06, .06); beep(1568, .1, .12); }
+  else { crunch(); beep(880, .05, .02, 'sine'); if (++goldCounter >= (cfg.play === 'challenge' && challenge === 'gold' ? 2 : GOLD_EVERY)) goldCounter = -1; }
   if (cfg.play === 'versus') return; // no teamwork bonus or rescues against each other
   // Teamwork bonus: you and a teammate eat within a moment of each other
   if (snakes.some(o => o !== s && tickNo - (lastEat[o.id] ?? -99) <= Math.round(TEAM_MS / TICK))) {
@@ -1583,6 +1583,7 @@ const FX_SAFE = {
   burst: (p, color, n, speed) => burst(posOf(p), HEX.test(color) ? color : '#ffffff', int(n, 0, 30), num(speed, 0, 6)),
   popup: (p, text, color) => popup(posOf(p), String(text).slice(0, 12), HEX.test(color) ? color : '#ffffff'),
   shake: () => doShake(),
+  crunch: () => crunch(),
 };
 
 function setClock(t) { lastTick = t; applyAt = t + TICK; }
@@ -1655,6 +1656,25 @@ function beep(freq, dur, delay = 0, type = 'square') {
     o.type = type; o.frequency.value = freq;
     g.gain.setValueAtTime(.06, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
     o.connect(g).connect(audio.destination); o.start(t); o.stop(t + dur);
+  } catch (e) {}
+}
+
+// A short "crunch" (filtered noise), like biting an apple in Google's snake
+let noiseBuf = null;
+function crunch() {
+  if (recording) outFx.push(['crunch', []]);
+  if (muted) return;
+  try {
+    audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+    if (!noiseBuf) {
+      noiseBuf = audio.createBuffer(1, audio.sampleRate * .12, audio.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2);
+    }
+    const src = audio.createBufferSource(), f = audio.createBiquadFilter(), g = audio.createGain();
+    src.buffer = noiseBuf; f.type = 'bandpass'; f.frequency.value = 1800 + Math.random() * 600; f.Q.value = .8;
+    g.gain.value = .35;
+    src.connect(f).connect(g).connect(audio.destination); src.start();
   } catch (e) {}
 }
 
