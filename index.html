@@ -184,6 +184,7 @@
             <input type="checkbox" id="twoBox"> 👥 2 players on this keyboard
           </label>
           <div class="status" id="onStatus"></div>
+          <div class="status small" id="pubNote" hidden></div>
           <button class="link" id="leaveBtn" hidden>Leave online game</button>
         </div>
         <!-- Google-style settings: one row of icon dropdowns -->
@@ -408,6 +409,7 @@ const pings = {};      // host: slot -> that friend's connection delay
 let recording = false, outFx = [], inputSeq = 0, unacked = [], forceOverlay = false;
 let inbox = [], applyAt = 0, lastN = -1, pingMs = null;
 const PEER_PREFIX = 'coop-snake-v5-';
+const GAME_VERSION = '5.1'; // shown in the lobby, so friends can check they have the newest version
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
@@ -1707,7 +1709,7 @@ function leaveOnline(msg) {
   skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
-  setStatus(msg || '');
+  setStatus(msg || ''); renderPubNote();
 }
 
 // ---------- Public lobby ----------
@@ -1768,9 +1770,13 @@ function lobbyJoin() {
   p.on('open', () => {
     if (lobbyPeer !== p) return;
     const c = lobbyConn = p.connect(LOBBY_ID, { reliable:true, serialization:'json' });
-    c.on('open', () => { lobbyTries = 0; lobbyAsk(); postRoom(); });
+    // If the connection never opens (it can just hang), give up and try again rather than waiting forever
+    setTimeout(() => { if (lobbyConn === c && !c.open) lobbyRetry(); }, 8000);
+    c.on('open', () => { lobbyTries = 0; lobbyAsk(); postRoom(); renderLobby(); });
     c.on('data', m => {
-      if (lobbyConn !== c || !m || m.t !== 'rooms') return;
+      if (lobbyConn !== c || !m || typeof m !== 'object') return;
+      if (m.t === 'listed') { if (m.code === roomCode) { listedAt = performance.now(); renderPubNote(); } return; }
+      if (m.t !== 'rooms') return;
       lobbyRooms = arr(m.rooms, 30).map(cleanRoom).filter(Boolean);
       renderLobby();
     });
@@ -1805,6 +1811,7 @@ function keeperData(c, m) {
     if (old && old.by !== c.peer) return; // only the room's own host can update it
     if (!old && keptRooms.size >= 50) return;
     keptRooms.set(r.code, { ...r, by: c.peer, at: now });
+    sendTo(c, { t:'listed', code: r.code }); // so the host can show that it worked
     renderLobby();
   } else if (m.t === 'gone' && typeof m.code === 'string') {
     const old = keptRooms.get(m.code);
@@ -1819,8 +1826,20 @@ function postRoom() {
   if (role !== 'host' || !publicRoom || !peer || !peer.open) return;
   const room = { code: roomCode, name: roomName, n: playerSlots().length, game: cfg.game, play: cfg.play,
                  live: state !== 'ready' && state !== 'over' };
-  if (lobbyKeeper) { keptRooms.set(roomCode, { ...room, by: 'me', at: performance.now() }); renderLobby(); }
+  if (lobbyKeeper) { keptRooms.set(roomCode, { ...room, by: 'me', at: performance.now() }); listedAt = performance.now(); renderLobby(); }
   else if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'post', room });
+  renderPubNote();
+}
+// Public host: show whether the room really is in the list right now
+let listedAt = -1e9;
+function renderPubNote() {
+  const el = $('pubNote');
+  el.hidden = !(role === 'host' && publicRoom);
+  if (el.hidden) return;
+  el.textContent = performance.now() - listedAt < 8000
+    ? '✓ Listed in Public games — anyone in the Online menu can see it and join'
+    : lobbyTries > 2 ? "⚠ Can't reach the public list right now — retrying. Friends can still join with the code."
+    : 'Adding your room to the public list…';
 }
 function unpostRoom() {
   if (!publicRoom) return;
@@ -1831,11 +1850,13 @@ function unpostRoom() {
 function renderLobby() {
   const rooms = (lobbyKeeper ? roomList() : lobbyRooms).filter(r => r.code !== roomCode);
   const ready = lobbyKeeper || (lobbyConn && lobbyConn.open);
-  $('lobby').innerHTML = '<h3>🌍 Public games</h3>' + (rooms.length
+  $('lobby').innerHTML = `<h3>🌍 Public games <small style="opacity:.6;font-weight:400">· version ${GAME_VERSION}</small></h3>` + (rooms.length
     ? rooms.map(r => `<div class="room"><span><b>${roomTitle(r.name)}</b><br>
         <small>${GAME_NAMES[r.game]} · ${PLAY_NAMES[r.play]} · ${r.n}/${MAX_PLAYERS} players${r.live ? ' · playing now' : ''}</small></span>
         <button class="btn2" data-join="${r.code}"${r.n >= MAX_PLAYERS ? ' disabled' : ''}>${r.n >= MAX_PLAYERS ? 'Full' : 'Join'}</button></div>`).join('')
-    : `<div class="empty">${ready ? 'No public games right now — host one!' : 'Looking for games…'}</div>`);
+    : `<div class="empty">${ready ? 'No public games right now — host one!'
+        : lobbyTries > 2 ? "Can't reach the public list right now — still trying. You can still join with a code."
+        : 'Looking for games…'}</div>`);
 }
 $('lobby').addEventListener('click', e => {
   const b = e.target.closest('[data-join]');
@@ -1847,7 +1868,7 @@ setInterval(() => {
   if (uiMode !== 'online') { if (lobbyPeer) lobbyStop(); return; }
   if (!lobbyPeer) { if (!lobbyTimer) lobbyStart(); return; }
   if (lobbyKeeper) renderLobby(); else if (role === 'local') lobbyAsk();
-  postRoom();
+  postRoom(); renderPubNote();
 }, 3000);
 
 $('hostBtn').addEventListener('click', () => hostGame(false));
