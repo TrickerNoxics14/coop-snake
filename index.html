@@ -166,7 +166,7 @@
         <h1 id="ovTitle">Co-op Snake</h1>
         <p id="ovText"></p>
         <div class="seg modes menu-only" id="modeSeg">
-          <button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
+          <button data-mode="solo">Solo</button><button data-mode="local">Local (same keyboard)</button><button data-mode="online">Online</button>
         </div>
         <div class="online menu-only" id="onlinePanel" hidden>
           <div id="onIdle" class="online">
@@ -380,7 +380,7 @@ const copySkins = () => DEFAULT_SKINS.map(k => ({ ...k }));
 // The looks in the current game, one per player slot
 function startingSkins() {
   const k = copySkins();
-  if (uiMode === 'local') { k[0] = { ...savedSkins.local[0] }; k[1] = { ...savedSkins.local[1] }; }
+  if (uiMode !== 'online') { k[0] = { ...savedSkins.local[0] }; k[1] = { ...savedSkins.local[1] }; } // (solo uses P1's looks)
   else if (role !== 'guest') {
     k[0] = { ...savedSkins.online };
     if (seat2[0] !== undefined) k[seat2[0]] = { ...savedSkins.online2 };
@@ -418,7 +418,7 @@ let inbox = [], applyAt = 0, lastN = -1, pingMs = null;
 const PEER_PREFIX = 'coop-snake-v5-';
 const GAME_VERSION = '5.1'; // shown in the lobby, so friends can check they have the newest version
 
-const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}`;
+const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}${uiMode === 'solo' ? '-solo' : ''}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
 const eq = (a, b) => a.x === b.x && a.y === b.y;
 const inBounds = p => p.x >= 0 && p.y >= 0 && p.x < COLS && p.y < ROWS;
@@ -468,7 +468,8 @@ const starsOf = v => goal.filter(g => v >= g).length;
 const starText = n => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 function hintText() {
-  return (cfg.game === 'blender' ? `🌀 This round: ${GAME_NAMES[G]} · ` : '') + baseHint();
+  const h = (cfg.game === 'blender' ? `🌀 This round: ${GAME_NAMES[G]} · ` : '') + baseHint();
+  return uiMode === 'solo' ? h.replace('Shared score · ', '').replace(', or your teammate', '').replace(' or your teammate', '') : h;
 }
 function baseHint() {
   if (cfg.play === 'versus') return `Versus · Most apples when time runs out wins · Make others crash into you for +${CUT_BONUS}`;
@@ -522,7 +523,7 @@ document.addEventListener('fullscreenchange', fit);
 
 // Which player slots get a snake: two on one keyboard, or online the host plus every connected friend
 function playerSlots() {
-  if (role !== 'host') return [0, 1];
+  if (role !== 'host') return uiMode === 'solo' ? [0] : [0, 1];
   const out = [0];
   if (seat2[0] !== undefined) out.push(seat2[0]);
   for (const k of Object.keys(conns)) if (conns[k].open) { out.push(+k); if (seat2[k] !== undefined) out.push(seat2[k]); }
@@ -565,7 +566,8 @@ function reset() {
 
 // A new random challenge (not the same as last time), with targets to suit the team
 function pickChallenge() {
-  const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && G === 'peaceful'));
+  const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && G === 'peaceful')
+    && !(id === 'teamwork' && snakes.length < 2)); // (no teammate to sync with when playing solo)
   challenge = ids[Math.random() * ids.length | 0];
   const c = CHALLENGES[challenge], n = snakes.length;
   const f = c.scale ? (1 + .3 * (n - 2)) * Math.sqrt(SPEEDS.normal / SPEEDS[cfg.speed])
@@ -1179,7 +1181,7 @@ function updateHud() {
   $('score').textContent = score;
   for (let id = 0; id < MAX_PLAYERS; id++) {
     const s = snakeOf(id);
-    $('pl' + (id + 1)).hidden = !s || state === 'ready'; // like Google, the menu's top bar is just 🍎 and 🏆
+    $('pl' + (id + 1)).hidden = !s || state === 'ready' || uiMode === 'solo'; // like Google, the menu's top bar is just 🍎 and 🏆
     if (!s) continue;
     const down = !s.alive && state !== 'over';
     $('p' + (id + 1)).textContent = s.gone ? `${s.apples} · left` : down ? `${s.apples} · back in ${Math.ceil(s.respawn * TICK / 1000)}s` : s.apples;
@@ -1234,13 +1236,15 @@ function showOverlay(title, html, button, paused) {
 }
 
 function introText() {
+  if (uiMode === 'solo') return cfg.play === 'challenge' ? 'Beat a random challenge before time runs out — hit the targets for up to 3 ★!'
+    : "Eat apples to grow longer — and don't crash!";
   if (cfg.play === 'versus') return `Every snake for itself! Most apples after ${clock(VERSUS_MS / 1000)} wins.<br>
     Crash and you shrink back to 3 and sit out for 3s.<br>Get someone to crash into you for +${CUT_BONUS}!`;
   if (cfg.play === 'challenge') return `Team up to beat a random challenge before time runs out.<br>
     Every round is a new goal — hit the targets for up to 3 ★!`;
   return INTRO;
 }
-function showIntro() { showOverlay(cfg.play === 'versus' ? 'Versus Snake' : 'Co-op Snake', introText(), role === 'guest' ? 'Start' : 'Play'); }
+function showIntro() { showOverlay(uiMode === 'solo' ? 'Snake' : cfg.play === 'versus' ? 'Versus Snake' : 'Co-op Snake', introText(), role === 'guest' ? 'Start' : 'Play'); }
 
 const fanfare = () => { confetti(); beep(784, .1); beep(988, .1, .1); beep(1319, .2, .2); };
 const dotOf = id => `<span class="dot" style="background:${skinHex(id)}"></span>`;
@@ -1249,12 +1253,12 @@ function showGameOver() {
   const time = clock(Math.round(elapsed / 1000));
   if (cfg.play === 'versus') return showVersusOver(time);
   if (cfg.play === 'challenge') return showChallengeOver(time);
-  const isBest = score > 0 && score > bestAtStart;
+  const isBest = score > 0 && score > bestAtStart, solo = uiMode === 'solo';
   if (isBest) fanfare();
   showOverlay(isBest ? 'New best! 🏆' : G === 'peaceful' ? 'Well played!' : 'Game over',
-    `<span class="bigscore"><span>🍎<b>${score}</b></span><span>🏆<b>${best}</b></span></span>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
+    `<span class="bigscore"><span>🍎<b>${score}</b></span><span>🏆<b>${best}</b></span></span>${solo ? '' : snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
-     <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span>
+     ${solo ? '' : `<span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span>`}
      ${G === 'boss' ? `<span>👹 Bosses beaten ${stats.bosses}</span>` : ''}</span>`,
     'Play again');
 }
@@ -1357,6 +1361,7 @@ function playerSteer(p, dir) {
   if (role === 'guest') guestSteer(dir, p === 1 && mySlot2 >= 0 ? 1 : 0);
   else if (role === 'host') { if (connected()) steer(localSlot(p), dir); }
   else if (uiMode === 'local') steer(p, dir);
+  else if (uiMode === 'solo') steer(0, dir); // (arrows and WASD both steer you)
 }
 
 function pressPause() {
@@ -1494,6 +1499,7 @@ function pollPads() {
 
 // ---------- Online ----------
 function playerName(i) {
+  if (uiMode === 'solo') return 'You';
   if (role === 'local') return 'P' + (i + 1);
   return i === me() ? (second() >= 0 ? 'You 1' : 'You') : i === second() ? 'You 2' : 'P' + (i + 1);
 }
@@ -1515,7 +1521,7 @@ function applySkins() {
 function renderSkinPanel() {
   const panel = $('skinPanel');
   if (panel.hidden) return;
-  const slots = uiMode === 'local' ? [[0, 'P1'], [1, 'P2']]
+  const slots = uiMode === 'solo' ? [[0, 'You']] : uiMode === 'local' ? [[0, 'P1'], [1, 'P2']]
     : second() >= 0 ? [[me(), 'You 1'], [second(), 'You 2']] : [[me(), 'You']];
   panel.innerHTML = slots.map(([slot, label]) => {
     const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1; // local is always P1/P2
@@ -1529,7 +1535,7 @@ function renderSkinPanel() {
 
 function setSkin(slot, k) {
   skins[slot] = k;
-  if (uiMode === 'local') savedSkins.local[slot] = k;
+  if (uiMode !== 'online') savedSkins.local[slot] = k;
   else {
     const two = slot === second();
     savedSkins[two ? 'online2' : 'online'] = k;
@@ -1570,6 +1576,7 @@ function renderMenu() {
   $('leaveBtn').hidden = role === 'local';
   $('play').hidden = online && !on;
   document.querySelectorAll('select[data-key]').forEach(sel => { sel.disabled = role === 'guest'; });
+  document.querySelector('select[data-key=play] option[value=versus]').disabled = uiMode === 'solo';
   $('keys').hidden = online && !on;
   $('twoBox').parentElement.hidden = !online;
   $('twoBox').checked = wantTwo;
@@ -1577,10 +1584,13 @@ function renderMenu() {
     ? `<div>${dotOf(me())}<b>You 1</b> W A S D · emotes 1–4</div><div>${dotOf(second())}<b>You 2</b> Arrow keys · emotes 7–0</div>`
     : online
     ? `<div>${youAre()} · steer with W A S D or arrows · emotes 1–4</div>`
+    : uiMode === 'solo'
+    ? `<div><span class="dot" style="background:var(--p1)"></span><b>You</b> Arrow keys or W A S D</div>`
     : `<div><span class="dot" style="background:var(--p1)"></span><b>P1</b> W A S D · emotes 1–4</div>
        <div><span class="dot" style="background:var(--p2)"></span><b>P2</b> Arrow keys · emotes 7–0</div>`;
   const common = 'Space pause · M mute · F fullscreen · 🎮 controllers work too';
-  $('help').innerHTML = (cfg.play === 'coop' ? INTRO_MORE + '<br>' : '') + (!online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
+  $('help').innerHTML = uiMode === 'solo' ? `Any movement key starts · ${common}<br>Touch: swipe anywhere on the board`
+    : (cfg.play === 'coop' ? INTRO_MORE + '<br>' : '') + (!online ? `Any movement key starts · ${common}<br>Touch: swipe on the left half for P1, right half for P2`
     : role === 'guest' ? `The host picks the settings · ${common}`
     : `You pick the settings · ${common}`);
   for (let i = 0; i < MAX_PLAYERS; i++) $('pn' + (i + 1)).textContent = playerName(i);
@@ -1605,6 +1615,7 @@ $('modeSeg').addEventListener('click', e => {
   if (b.dataset.mode === uiMode) return;
   if (role !== 'local') leaveOnline('');
   uiMode = b.dataset.mode;
+  if (uiMode === 'solo' && cfg.play === 'versus') cfg = validCfg({ ...cfg, play:'coop' }); // (no one to play against)
   skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
