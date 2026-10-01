@@ -168,7 +168,7 @@
           <span>Play</span>
           <div class="seg" data-key="play"><button data-v="coop">Co-op</button><button data-v="challenge">Challenges</button><button data-v="versus">Versus</button></div>
           <span>Mode</span>
-          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button></div>
+          <div class="seg" data-key="game"><button data-v="classic">Classic</button><button data-v="maze">Maze</button><button data-v="peaceful">Peaceful</button><button data-v="poison">Poison</button><button data-v="portal">Portal</button><button data-v="speed">Speed-up</button><button data-v="statue">Statue</button><button data-v="reverse">Reverse</button><button data-v="key">Key</button><button data-v="blender">Blender</button></div>
           <span>Speed</span>
           <div class="seg" data-key="speed"><button data-v="slow">Slow</button><button data-v="normal">Normal</button><button data-v="fast">Fast</button></div>
           <span>Apples</span>
@@ -207,7 +207,16 @@ const GAMES = {
   poison: 'Dark ☠ apples are poison: eating one knocks you out. They jump to new spots whenever an apple is eaten.',
   portal: 'Two pairs of portals: go into one and you pop out of its twin, still heading the same way.',
   speed: 'Every point the team scores makes both snakes a little faster. How far can you push it?',
+  statue: 'Every apple you eat leaves a stone statue of your snake behind (your old statue crumbles). Don\'t crash into them!',
+  reverse: 'Every apple you eat flips your snake around: your tail becomes your head!',
+  key: 'Apples are locked in cages. Grab the 🔑 key to unlock them — cages are solid until then.',
+  blender: 'A random mode every round — keep on your toes!',
 };
+const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison:'Poison', portal:'Portal', speed:'Speed-up',
+  statue:'Statue', reverse:'Reverse', key:'Key', blender:'Blender' };
+// Blender picks one of these each round
+const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key'];
+let G = 'classic'; // the mode actually being played this round (differs from cfg.game in Blender)
 // How you play: endless co-op, timed team challenges, or everyone for themselves
 const PLAYS = {
   coop: '',
@@ -398,13 +407,19 @@ const starsOf = v => goal.filter(g => v >= g).length;
 const starText = n => '★'.repeat(n) + '☆'.repeat(3 - n);
 
 function hintText() {
+  return (cfg.game === 'blender' ? `🌀 This round: ${GAME_NAMES[G]} · ` : '') + baseHint();
+}
+function baseHint() {
   if (cfg.play === 'versus') return `Versus · Most apples when time runs out wins · Make others crash into you for +${CUT_BONUS}`;
   if (cfg.play === 'challenge') { const c = CHALLENGES[challenge]; return `Challenge · ${c.icon} ${c.name}: ${c.desc}`; }
-  if (cfg.game === 'peaceful') return 'Shared score · Peaceful mode: nobody can crash — pause to end the game';
-  if (cfg.game === 'poison') return 'Shared score · Skip the dark ☠ apples — they knock you out';
-  if (cfg.game === 'portal') return 'Shared score · Portals connect in matching colors — use them to cross the board';
-  if (cfg.game === 'speed') return 'Shared score · Every point makes you faster';
-  if (cfg.game === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
+  if (G === 'peaceful') return 'Shared score · Peaceful mode: nobody can crash — pause to end the game';
+  if (G === 'poison') return 'Shared score · Skip the dark ☠ apples — they knock you out';
+  if (G === 'portal') return 'Shared score · Portals connect in matching colors — use them to cross the board';
+  if (G === 'speed') return 'Shared score · Every point makes you faster';
+  if (G === 'statue') return 'Shared score · Eating leaves a statue of your snake — steer around them';
+  if (G === 'reverse') return 'Shared score · Eating flips your snake around — watch where your tail is!';
+  if (G === 'key') return 'Shared score · Grab the 🔑 to open the cages, then eat the apples';
+  if (G === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
 }
@@ -455,6 +470,7 @@ function makeSnake(id, y) {
 }
 
 function reset() {
+  if (role !== 'guest') G = cfg.game !== 'blender' ? cfg.game : BLEND.filter(g => g !== G)[Math.random() * (BLEND.length - 1) | 0];
   applyConfig();
   // Everyone starts on the left, spread out over the rows
   const ids = playerSlots();
@@ -463,9 +479,11 @@ function reset() {
   snakes = ids.map((id, i) => makeSnake(id, rows[i]));
   rocks = []; rockBorn.clear(); portals = [];
   apples = rows.slice(0, 2).map(y => ({ x: COLS - 5, y })).slice(0, cfg.apples);
-  if (cfg.game === 'portal') placePortals(rows);
+  if (G === 'portal') placePortals(rows);
   while (normalApples() < cfg.apples) spawnApple();
-  if (cfg.game === 'poison') movePoison();
+  if (G === 'poison') movePoison();
+  statues = [];
+  if (G === 'key') { apples.forEach(a => { a.locked = true; }); ensureKey(); }
   score = 0; goldCounter = 0; tickNo = 0; lastEat = [-99, -99]; elapsed = 0;
   stats = { rescues:0, teamwork:0, longest:4, eaten:0, golds:0, safeMs:0, ch:0 };
   particles = []; popups = []; waves = []; shake = 0;
@@ -476,7 +494,7 @@ function reset() {
 
 // A new random challenge (not the same as last time), with targets to suit the team
 function pickChallenge() {
-  const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && cfg.game === 'peaceful'));
+  const ids = Object.keys(CHALLENGES).filter(id => id !== challenge && !(id === 'safe' && G === 'peaceful'));
   challenge = ids[Math.random() * ids.length | 0];
   const c = CHALLENGES[challenge], n = snakes.length;
   const f = c.scale ? (1 + .3 * (n - 2)) * Math.sqrt(SPEEDS.normal / SPEEDS[cfg.speed]) * (cfg.apples === 1 ? .8 : 1) : 1;
@@ -486,10 +504,42 @@ function pickChallenge() {
 function occupied() {
   const cells = [];
   snakes.forEach(s => s.alive && cells.push(...s.body));
-  return cells.concat(apples, rocks, portals);
+  return cells.concat(apples, rocks, portals, statues);
 }
 
-const normalApples = () => apples.filter(a => !a.gold && !a.poison).length;
+const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key).length;
+
+// Key mode: whenever an apple is caged, there's a key somewhere to open it
+function ensureKey() {
+  if (apples.some(a => a.locked) && !apples.some(a => a.key)) spawnApple('key');
+}
+
+// Statue mode: eating leaves a statue of your snake. Its squares turn solid once nobody is on them
+// (they wait in `statues` until then, and become rocks that remember whose statue they are).
+let statues = [];
+function makeStatue(s) {
+  rocks = rocks.filter(r => r.statue !== s.id);
+  statues = statues.filter(c => c.statue !== s.id).concat(s.body.map(c => ({ x:c.x, y:c.y, statue:s.id })));
+  beep(260, .1, 0, 'triangle');
+}
+function settleStatues() {
+  const onSnake = c => snakes.some(s => s.alive && s.body.some(b => eq(b, c)));
+  const ready = statues.filter(c => !onSnake(c) && !apples.some(a => eq(a, c)));
+  if (!ready.length) return;
+  statues = statues.filter(c => !ready.includes(c));
+  rocks.push(...ready);
+}
+
+// Reverse mode: the snake turns around — the tail end becomes the head
+function flipSnake(s) {
+  s.body.reverse();
+  const [h, n] = s.body;
+  s.dir = Object.keys(DIRS).find(d => eq(step(n, d), h))
+       || Object.keys(DIRS).find(d => !aheadBlocked(s, d) && !eq(step(h, d), n)) || OPP[s.dir];
+  s.queue = []; s.log = []; s.flipped = true;
+  burst(h, skinHex(s.id), 10, 2.5);
+  beep(700, .06, 0, 'sine'); beep(500, .08, .06, 'sine');
+}
 
 // Portal mode: two linked pairs, kept away from the starting rows, the edges and each other
 function placePortals(rows) {
@@ -512,7 +562,7 @@ function spawnApple(kind) {
   const gold = kind === true || kind === 'gold';
   const occ = occupied();
   // Poison never lands right next to a snake's head, so you always get a fair chance to dodge it
-  const nearHead = c => kind === 'poison' && snakes.some(s => s.alive && Math.abs(s.body[0].x - c.x) <= 2 && Math.abs(s.body[0].y - c.y) <= 2);
+  const nearHead = c => (kind === 'poison' || kind === 'key' || (!kind && G === 'key')) && snakes.some(s => s.alive && Math.abs(s.body[0].x - c.x) <= 2 && Math.abs(s.body[0].y - c.y) <= 2);
   const free = [];
   for (let y = 0; y < ROWS; y++) for (let x = 0; x < COLS; x++)
     if (!occ.some(c => c.x === x && c.y === y) && !nearHead({ x, y })) free.push({x,y});
@@ -520,6 +570,8 @@ function spawnApple(kind) {
   const a = free[Math.random() * free.length | 0];
   if (gold) { a.gold = true; a.ttl = Math.round(GOLD_MS / TICK); a.max = a.ttl; }
   if (kind === 'poison') a.poison = true;
+  if (kind === 'key') a.key = true;
+  else if (!kind && G === 'key') a.locked = true;
   apples.push(a);
   if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
 }
@@ -569,8 +621,8 @@ function tick() {
   recording = true;
   tickNo++;
   elapsed += TICK;
-  const peaceful = cfg.game === 'peaceful';
-  snakes.forEach(s => { s.fresh = false; s.ateNow = false; });
+  const peaceful = G === 'peaceful';
+  snakes.forEach(s => { s.fresh = false; s.ateNow = false; s.flipped = false; });
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
 
   apples.forEach(a => { if (a.gold) a.ttl--; });
@@ -608,7 +660,7 @@ function tick() {
     const h = s.body[0];
     return !inBounds(h)
       || rocks.some(r => eq(r, h))
-      || (s.appleIdx >= 0 && apples[s.appleIdx].poison)
+      || (s.appleIdx >= 0 && (apples[s.appleIdx].poison || apples[s.appleIdx].locked))
       || s.body.some((c, i) => i > 0 && eq(c, h))
       || live.some(o => o !== s && o.body.some(c => eq(c, h)));
   });
@@ -642,12 +694,13 @@ function tick() {
   }
   // Remember each snake's last few moves, so a late key press from an online friend can still count
   for (const s of live) {
-    if (!s.alive || s.fresh) { s.log = []; continue; }
+    if (!s.alive || s.fresh || s.flipped) { s.log = []; continue; }
     s.log.unshift(s.next ? { tail:s.popped, turn:s.turned, ate:s.ateNow, ok:!dying.length }
                          : { tail:null, turn:false, ate:false, ok:false });
     if (s.log.length > maxRewind()) s.log.length = maxRewind();
   }
   stats.longest = Math.max(stats.longest, ...snakes.map(s => s.body.length));
+  if (statues.length) settleStatues();
   if (cfg.play === 'challenge') {
     const had = starsOf(stats.ch);
     stats.ch = Math.max(stats.ch, CHALLENGES[challenge].val());
@@ -666,6 +719,16 @@ function tick() {
 }
 
 function eatApple(s, a) {
+  if (a.key) { // Key mode: open every cage
+    apples.forEach(o => { if (o.locked) { o.locked = false; burst(o, '#ffd54a', 10, 2.5); } });
+    burst(a, '#ffd54a', 14, 3);
+    popup(a, 'Unlocked!', '#ffe680');
+    beep(660, .06, 0, 'triangle'); beep(990, .06, .06, 'triangle'); beep(1320, .1, .12, 'triangle');
+    s.eatFx = 1;
+    return;
+  }
+  if (G === 'statue') makeStatue(s);
+  if (G === 'reverse') flipSnake(s);
   const pts = a.gold ? GOLD_POINTS : 1;
   s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
   stats.eaten++; if (a.gold) stats.golds++;
@@ -691,9 +754,10 @@ function eatApple(s, a) {
 function refillAfterEating(count) {
   while (normalApples() < cfg.apples) spawnApple();
   if (goldCounter === -1) { goldCounter = 0; if (!apples.some(a => a.gold)) spawnApple(true); }
-  if (cfg.game === 'maze') for (let i = 0; i < count; i++) spawnRock();
-  if (cfg.game === 'poison') movePoison();
-  if (cfg.game === 'speed') {
+  if (G === 'maze') for (let i = 0; i < count; i++) spawnRock();
+  if (G === 'poison') movePoison();
+  if (G === 'key') ensureKey();
+  if (G === 'speed') {
     // 4% faster per point, down to a limit
     TICK = Math.min(TICK, Math.max(55, Math.round(SPEEDS[cfg.speed] * Math.pow(.96, score))));
   }
@@ -706,8 +770,8 @@ const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.n
 // Would moving `dir` next stop or kill snake s? Its head is held back instead of sliding into trouble.
 function aheadBlocked(s, dir) {
   const b = s.body, next = dest(b[0], dir);
-  if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => a.poison && eq(a, next))) return true;
-  if (cfg.game === 'peaceful') return false;
+  if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => (a.poison || a.locked) && eq(a, next))) return true;
+  if (G === 'peaceful') return false;
   // A tail is safe to follow, since it moves out of the way on the same step (unless that snake is growing)
   const hits = o => o.body.some((c, i) => eq(c, next) && (o.pending > 0 || i < o.body.length - 1));
   return hits(s) || snakes.some(o => o !== s && o.alive && hits(o));
@@ -755,7 +819,7 @@ function replayTurn(s, k, dir) {
   if (dir === s.dir || dir === OPP[s.dir]) return null;
   const recent = s.log.slice(0, k);
   if (!recent.every(r => r.ok && !r.turn && !r.ate)) return null;
-  const peaceful = cfg.game === 'peaceful';
+  const peaceful = G === 'peaceful';
   // Where every teammate was during those moves
   const mates = peaceful ? [] : snakes.filter(o => o !== s && o.alive).map(o => pastBodies(o, k));
   if (mates.includes(null)) return null;
@@ -776,7 +840,7 @@ function replayTurn(s, k, dir) {
       }
     }
     const apple = apples.find(a => eq(a, head));
-    if (apple) { if (j > 0 || apple.poison) return null; eat = true; }
+    if (apple) { if (j > 0 || apple.poison || apple.locked) return null; eat = true; }
     log.unshift({ tail, turn: j === k - 1, ate: false, ok: true });
   }
   return { body, log: log.concat(s.log.slice(k)), eat };
@@ -793,7 +857,7 @@ function lateTurn(slot, dir, at) {
   if (i >= 0) {
     recording = true;
     eatApple(s, apples.splice(i, 1)[0]);
-    s.log[0].ate = true;
+    if (s.log[0]) s.log[0].ate = true; // (empty if Reverse mode just flipped it)
     refillAfterEating(1);
     recording = false;
   }
@@ -886,7 +950,7 @@ function showGameOver() {
   if (cfg.play === 'challenge') return showChallengeOver(time);
   const isBest = score > 0 && score > bestAtStart;
   if (isBest) fanfare();
-  showOverlay(isBest ? 'New best! 🏆' : cfg.game === 'peaceful' ? 'Well played!' : 'Game over',
+  showOverlay(isBest ? 'New best! 🏆' : G === 'peaceful' ? 'Well played!' : 'Game over',
     `You scored <b>${score}</b> together!<br>${snakes.map(s => `${playerName(s.id)}: ${s.apples}`).join(' · ')}
      <span class="stats"><span>⏱ ${time}</span><span>📏 Longest ${stats.longest}</span>
      <span>🛟 Rescues ${stats.rescues}</span><span>🤝 Teamwork ${stats.teamwork}</span></span>`,
@@ -1373,7 +1437,7 @@ function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   const m = {
     t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
-    ch: challenge, goal, el: elapsed,
+    ch: challenge, goal, el: elapsed, g: G, statues,
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone })),
@@ -1451,6 +1515,8 @@ function cleanState(m) {
     const c = validCfg(m.cfg);
     const [cols, rows] = BOARDS[c.board], cells = cols * rows;
     const cellOf = p => ({ x: int(p && p.x, 0, cols - 1), y: int(p && p.y, 0, rows - 1) });
+    // a rock that's part of a player's statue remembers whose (for its color)
+    const statueCell = p => { const o = cellOf(p); if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue; return o; };
     const list = arr(m.snakes, MAX_PLAYERS);
     if (!list.length) return null;
     // every snake needs its own player slot 0–3
@@ -1470,9 +1536,13 @@ function cleanState(m) {
         const o = cellOf(a);
         if (a && a.gold) { o.gold = true; o.max = int(a.max, 1, 1000); o.ttl = int(a.ttl, 0, o.max); }
         else if (a && a.poison === true) o.poison = true;
+        else if (a && a.key === true) o.key = true;
+        else if (a && a.locked === true) o.locked = true;
         return o;
       }),
-      rocks: arr(m.rocks, cells).map(cellOf),
+      rocks: arr(m.rocks, cells).map(statueCell),
+      statues: arr(m.statues, cells).map(statueCell),
+      g: has(GAMES, m.g) && m.g !== 'blender' ? m.g : (c.game === 'blender' ? 'classic' : c.game),
       portals: arr(m.portals, 4).length === 4 ? m.portals.map(cellOf) : [],
       tk: num(m.tk, 40, 400, SPEEDS[c.speed]),
       ch: has(CHALLENGES, m.ch) ? m.ch : 'apples',
@@ -1527,7 +1597,8 @@ function pumpInbox() {
 
 function applyState(m) {
   const prev = state, now = performance.now();
-  challenge = m.ch; goal = m.goal; elapsed = m.el;
+  challenge = m.ch; goal = m.goal; elapsed = m.el; statues = m.statues;
+  if (m.g !== G) { G = m.g; $('hint').textContent = hintText(); }
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
   state = m.state; score = m.score; apples = m.apples; rocks = m.rocks; stats = m.stats;
   portals = m.portals; TICK = m.tk;
@@ -1607,7 +1678,25 @@ function drawBoard() {
   }
 }
 
+// Statue squares: grey stone tinted with the snake's color. `ghost` = not solid yet (a snake is still on it).
+function drawStatue(r, now, ghost) {
+  const key = 's' + r.x + ',' + r.y;
+  if (!ghost && !rockBorn.has(key)) rockBorn.set(key, now);
+  const t = ghost ? 1 : Math.min(1, (now - rockBorn.get(key)) / 250);
+  const x = r.x * CELL, y = r.y * CELL, pad = CELL * (.12 + .1 * (1 - t));
+  const stone = mix(skinHex(r.statue), '#9aa0a8', .7);
+  ctx.globalAlpha = ghost ? .3 : 1;
+  ctx.fillStyle = 'rgba(0,0,0,.18)';
+  ctx.fillRect(x + pad, y + pad + CELL * .06, CELL - pad * 2, CELL - pad * 2);
+  ctx.fillStyle = stone;
+  ctx.fillRect(x + pad, y + pad, CELL - pad * 2, CELL - pad * 2);
+  ctx.fillStyle = 'rgba(255,255,255,.25)';
+  ctx.fillRect(x + pad, y + pad, CELL - pad * 2, CELL * .08);
+  ctx.globalAlpha = 1;
+}
+
 function drawRock(r, now) {
+  if (r.statue !== undefined) return drawStatue(r, now, false);
   const key = r.x + ',' + r.y;
   if (!rockBorn.has(key)) rockBorn.set(key, now);
   const a = Math.min(1, (now - rockBorn.get(key)) / 280), u = a - 1;
@@ -1632,7 +1721,7 @@ function drawRock(r, now) {
 
 // Apples pop in when they appear and bob gently; golden ones sparkle
 function drawApple(a, now) {
-  const key = a.x + ',' + a.y + (a.poison ? 'p' : a.gold ? 'g' : '');
+  const key = a.x + ',' + a.y + (a.poison ? 'p' : a.gold ? 'g' : a.key ? 'k' : '');
   if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, now); }
   const t = Math.min(1, (now - appleBorn.get(key)) / 320), u = t - 1;
   const pop = 1 + 2.7 * u * u * u + 1.7 * u * u;
@@ -1658,6 +1747,20 @@ function drawApple(a, now) {
 function drawAppleShape(a, now) {
   if (a.gold && a.ttl < 16 && Math.floor(now / 110) % 2) return; // blink before vanishing
   const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
+  if (a.key) return drawKey(cx, (a.y + .5) * CELL, now);
+  if (a.locked) { // the apple, inside a cage
+    drawAppleShape({ x:a.x, y:a.y }, now);
+    const x = a.x * CELL + CELL * .08, y = a.y * CELL + CELL * .08, w = CELL * .84;
+    ctx.strokeStyle = '#5b4a3a'; ctx.lineWidth = CELL * .07; ctx.lineCap = 'butt';
+    ctx.strokeRect(x, y, w, w);
+    ctx.lineWidth = CELL * .045;
+    ctx.beginPath();
+    for (let i = 1; i < 4; i++) { ctx.moveTo(x + w * i / 4, y); ctx.lineTo(x + w * i / 4, y + w); }
+    ctx.stroke();
+    ctx.fillStyle = '#ffcc33'; // little padlock
+    ctx.fillRect(x + w / 2 - CELL * .1, y + w - CELL * .16, CELL * .2, CELL * .16);
+    return;
+  }
   const r = CELL * .36 * (1 + Math.sin(now / (a.gold ? 120 : 250)) * (a.gold ? .07 : .03));
   if (a.gold) {
     const g = ctx.createRadialGradient(cx, cy, r * .5, cx, cy, r * 2);
@@ -1683,6 +1786,22 @@ function drawAppleShape(a, now) {
     ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = CELL * .05;
     ctx.beginPath(); ctx.arc(cx, cy, r * 1.35, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * a.ttl / a.max); ctx.stroke();
   }
+}
+
+// A golden key that slowly swings
+function drawKey(cx, cy, now) {
+  ctx.save();
+  ctx.translate(cx, cy); ctx.rotate(-.6 + Math.sin(now / 300) * .2);
+  const g = ctx.createRadialGradient(0, 0, CELL * .1, 0, 0, CELL * .55);
+  g.addColorStop(0, 'rgba(255,230,120,.55)'); g.addColorStop(1, 'rgba(255,230,120,0)');
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(0, 0, CELL * .55, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#f5c518'; ctx.fillStyle = '#f5c518'; ctx.lineWidth = CELL * .09; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(-CELL * .17, 0, CELL * .13, 0, Math.PI * 2); ctx.stroke(); // ring
+  ctx.beginPath(); ctx.moveTo(-CELL * .04, 0); ctx.lineTo(CELL * .3, 0);              // shaft
+  ctx.moveTo(CELL * .2, 0); ctx.lineTo(CELL * .2, CELL * .11);                        // teeth
+  ctx.moveTo(CELL * .29, 0); ctx.lineTo(CELL * .29, CELL * .09);
+  ctx.stroke();
+  ctx.restore();
 }
 
 // Portals: swirling rings, each pair in its own color
@@ -1808,7 +1927,7 @@ function drawSnake(s, t, now) {
   const ang = Math.atan2(d.y, d.x), headR = CELL * .39 * (1 + .28 * s.eatFx);
   // Mouth opens when an apple is right ahead, like Google's snake
   let near = false;
-  if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => !a.poison && eq(a, p)); }
+  if (s.alive) for (let i = 0, p = b[0]; i < 2 && !near; i++) { p = step(p, dir); near = apples.some(a => !a.poison && !a.locked && eq(a, p)); }
   L.mouth += ((near ? 1 : 0) - L.mouth) * Math.min(1, .3 * frameK);
   // Eyes, with the occasional blink
   if (!L.blinkAt || now > L.blinkAt + 150) L.blinkAt = now + rand(2200, 5200);
@@ -1943,11 +2062,16 @@ function drawCountdown(now) {
   ctx.strokeText(n, COLS * CELL / 2, ROWS * CELL / 2); ctx.fillText(n, COLS * CELL / 2, ROWS * CELL / 2);
   ctx.restore();
   // Challenges and versus: say what this round is about
-  if (cfg.play === 'coop') return;
+  const blend = cfg.game === 'blender';
+  if (cfg.play === 'coop' && !blend) return;
   const c = CHALLENGES[challenge], W = COLS * CELL;
   const lines = cfg.play === 'versus'
     ? [['⚔ Versus', .62], [`Most apples in ${clock(VERSUS_MS / 1000)} wins!`, .4]]
-    : [[`${c.icon} ${c.name}`, .62], [c.desc, .36], [`★ ${goal[0]}   ★★ ${goal[1]}   ★★★ ${goal[2]}${c.unit || ''}   ·   ${c.secs}s`, .36]];
+    : cfg.play === 'challenge'
+    ? [[`${c.icon} ${c.name}`, .62], [c.desc, .36], [`★ ${goal[0]}   ★★ ${goal[1]}   ★★★ ${goal[2]}${c.unit || ''}   ·   ${c.secs}s`, .36]]
+    : [];
+  // Blender: say which mode came up this round
+  if (blend) lines.push([`🌀 ${GAME_NAMES[G]}`, lines.length ? .4 : .62], [GAMES[G], .32]);
   ctx.save();
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   let y = CELL * .9;
@@ -1998,6 +2122,7 @@ function frame(now) {
   if (shake > .02) { ctx.translate(rand(-1, 1) * shake * 10, rand(-1, 1) * shake * 10); shake *= Math.pow(.88, frameK); }
   drawBoard();
   rocks.forEach(r => drawRock(r, now));
+  statues.forEach(r => drawStatue(r, now, true));
   drawPortals(now);
   apples.forEach(a => drawApple(a, now));
   // Notice snakes appearing or crashing, to animate it (works the same on every player's screen)
