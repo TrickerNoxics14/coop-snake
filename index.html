@@ -228,6 +228,7 @@ const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison
   statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', blender:'Blender' };
 // Blender picks one of these each round
 const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet'];
+const GLIDE_MS = 120; // how fast the head glides onto a new line after a mid-square turn
 const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
 let G = 'classic'; // the mode actually being played this round (differs from cfg.game in Blender)
 // How you play: endless co-op, timed team challenges, or everyone for themselves
@@ -835,10 +836,11 @@ function aheadBlocked(s, dir) {
   return hits(s) || snakes.some(o => o !== s && o.alive && hits(o));
 }
 
-// Which move a new key press turns on: the square the head is drawn in. Once the head is more than
-// halfway into the next square, the turn happens there instead of snapping the head back.
+// Which move a new key press turns on: the square the head is drawn in. Once the head is most of the way
+// into the next square, the turn happens there instead (earlier than that, the head glides back onto the new line).
+const LATE_AT = .65;
 function turnMove(s, n) {
-  const late = !s.queue.length && stepT() >= .5 && !aheadBlocked(s, s.dir);
+  const late = !s.queue.length && stepT() >= LATE_AT && !aheadBlocked(s, s.dir);
   return n + 1 + s.queue.length + (late ? 1 : 0);
 }
 
@@ -1955,6 +1957,23 @@ function drawSnake(s, t, now) {
   const keep = grow || tt === 0 ? n : n - 1;
   for (let i = 0; i < keep; i++) pts.push(b[i]);
   if (keep < n) pts.push(toward(b[n - 1], linkNext(b[n - 1], b[n - 2] || b[0]), tt));
+
+  // A turn pressed mid-square would make the head snap sideways (it was already partway along the old way).
+  // Instead, it glides from where it was onto the new line in a few frames, so turns are instant AND smooth.
+  // (Same for any other sudden jump while the head is in the same square, e.g. stopping in front of a teammate.)
+  const raw = pts[0];
+  if (s.alive && L.lastB0 && eq(L.lastB0, b[0]) && L.lastHead) {
+    const jump = Math.hypot(raw.x - L.lastRaw.x, raw.y - L.lastRaw.y) - Math.abs(tt - L.lastTT);
+    if (jump > .05 && Math.abs(raw.x - L.lastHead.x) + Math.abs(raw.y - L.lastHead.y) < 1.5)
+      L.glide = { x: L.lastHead.x - raw.x, y: L.lastHead.y - raw.y, at: now };
+  } else if (!L.lastB0 || !s.alive) L.glide = null;
+  if (L.glide) {
+    const k = (now - L.glide.at) / GLIDE_MS;
+    if (k >= 1 || !s.alive) L.glide = null;
+    // (eases in and out, so no single frame jumps)
+    else { const f = 1 - k * k * (3 - 2 * k); pts[0] = { x: raw.x + L.glide.x * f, y: raw.y + L.glide.y * f }; }
+  }
+  L.lastB0 = b[0]; L.lastRaw = raw; L.lastTT = tt; L.lastHead = pts[0];
 
   // Where the path wraps across an edge, run off that side and back in from the opposite one
   // (each point also carries k = how far along the body it is, so the tail can taper)
