@@ -415,8 +415,8 @@ const lastSeq = {};    // host: slot -> newest key press received from that frie
 const pings = {};      // host: slot -> that friend's connection delay
 let recording = false, outFx = [], inputSeq = 0, unacked = [], forceOverlay = false;
 let inbox = [], applyAt = 0, lastN = -1, pingMs = null;
-const PEER_PREFIX = 'coop-snake-v5-';
-const GAME_VERSION = '5.1'; // shown in the lobby, so friends can check they have the newest version
+const PEER_PREFIX = 'coop-snake-v6-';
+const GAME_VERSION = '6.0'; // shown in the lobby, so friends can check they have the newest version
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}${uiMode === 'solo' ? '-solo' : ''}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
