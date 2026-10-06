@@ -192,7 +192,7 @@
           <label title="Apples"><span>🍎</span><select data-key="apples" aria-label="Apples"><option value="1">1</option><option value="2">2</option><option value="3">3</option><option value="5">5</option><option value="10">10</option><option value="20">20</option></select></label>
           <label title="Speed"><span>⚡</span><select data-key="speed" aria-label="Speed"><option value="slow">🐢 Slow</option><option value="normal">🐇 Normal</option><option value="fast">⚡ Fast</option></select></label>
           <label title="Board size"><span>▦</span><select data-key="board" aria-label="Board size"><option value="small">Small</option><option value="medium">Medium</option><option value="large">Large</option></select></label>
-          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="boss">👹 Boss</option><option value="blender">Blender</option></select></label>
+          <label title="Mode"><span>🎮</span><select data-key="game" aria-label="Mode"><option value="classic">Classic</option><option value="maze">Maze</option><option value="peaceful">Peaceful</option><option value="poison">Poison</option><option value="portal">Portal</option><option value="speed">Speed-up</option><option value="statue">Statue</option><option value="reverse">Reverse</option><option value="key">Key</option><option value="light">Light</option><option value="shield">Shield</option><option value="magnet">Magnet</option><option value="boss">👹 Boss</option><option value="squeeze">Squeeze</option><option value="runaway">Runaway</option><option value="hunger">Hunger</option><option value="blender">Blender</option></select></label>
           <label title="Edges"><span>🧱</span><select data-key="mode" aria-label="Edges"><option value="walls">Walls</option><option value="wrap">Wrap around</option></select></label>
           <label title="How to play"><span>👥</span><select data-key="play" aria-label="How to play"><option value="coop">Co-op</option><option value="challenge">Challenges</option><option value="versus">Versus</option></select></label>
         </div>
@@ -239,13 +239,16 @@ const GAMES = {
   light: "Lights out! You can only see what's near the snakes' heads. Apples glow a little.",
   shield: 'Grab a 🛡 shield to survive your next crash — you turn see-through for a moment and slip free.',
   magnet: 'Your head is a magnet: apples close to you slide toward your mouth.',
+  squeeze: 'The walls start closing in after a few seconds, ring by ring. Stay in the middle and keep eating!',
+  runaway: 'The apples are scared of you! They run away when you get close, so corner them.',
+  hunger: 'Every snake gets hungry: eat an apple every 10 seconds or you starve and get knocked out.',
   boss: 'Boss fight! Bite a boss on its glowing tail to hurt it — touching the rest of it knocks you out. Beat one and a tougher one shows up.',
   blender: 'A random mode every round — keep on your toes!',
 };
 const GAME_NAMES = { classic:'Classic', maze:'Maze', peaceful:'Peaceful', poison:'Poison', portal:'Portal', speed:'Speed-up',
-  statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', boss:'Boss', blender:'Blender' };
+  statue:'Statue', reverse:'Reverse', key:'Key', light:'Light', shield:'Shield', magnet:'Magnet', boss:'Boss', squeeze:'Squeeze', runaway:'Runaway', hunger:'Hunger', blender:'Blender' };
 // Blender picks one of these each round
-const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet', 'boss'];
+const BLEND = ['classic', 'maze', 'poison', 'portal', 'speed', 'statue', 'reverse', 'key', 'light', 'shield', 'magnet', 'boss', 'squeeze', 'runaway', 'hunger'];
 // Boss mode: the bosses take turns, and each round through all of them gets tougher.
 // `every` = moves once every this many player moves; `ai` = how it picks where to go.
 // Specials: `phase` = slides right through snakes' bodies, `slime` = leaves a trail that knocks you out
@@ -262,6 +265,7 @@ const BOSSES = {
 };
 const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king'];
 const SLIME_TICKS = 45, MOLE_DIG_EVERY = 18, MOLE_UNDER = 6;
+const SQUEEZE_START_MS = 15000, SQUEEZE_PAUSE_MS = 7000, FLEE_RANGE = 3, HUNGER_MS = 10000;
 const BOSS_HIT_POINTS = 3, BOSS_WIN_POINTS = 10, BOSS_STUN = 6, BOSS_GAP_MS = 3000;
 const GLIDE_MS = 80; // how fast the head glides onto a new line after a mid-square turn
 const SHIELD_SAFE_MS = 1500, SHIELD_EVERY = 4, MAGNET_RANGE = 4;
@@ -485,6 +489,9 @@ function baseHint() {
   if (G === 'shield') return 'Shared score · A 🛡 shield saves you from one crash';
   if (G === 'magnet') return 'Shared score · Apples near your head get pulled in';
   if (G === 'boss') return bossHint();
+  if (G === 'squeeze') return 'Shared score · The walls close in — stay near the middle!';
+  if (G === 'runaway') return 'Shared score · Apples run from your head — trap them against a wall';
+  if (G === 'hunger') return 'Shared score · Eat an apple every 10 seconds or you starve!';
   if (G === 'maze') return `Shared score · Every apple drops a rock — dodge the rocks${cfg.mode === 'wrap' ? '' : ', the walls'} and each other`;
   return cfg.mode === 'wrap' ? "Shared score · Don't run into yourself or your teammate"
                              : "Shared score · Don't run into walls, yourself, or your teammate";
@@ -535,7 +542,7 @@ const snakeOf = id => snakes.find(s => s.id === id);
 
 function makeSnake(id, y) {
   const body = [{x:4,y},{x:3,y},{x:2,y},{x:1,y}];
-  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0, shield:false, safe:0 };
+  return { id, body, dir:'right', queue:[], alive:true, respawn:0, apples:0, pending:0, eatFx:0, blocked:false, log:[], moves:0, shield:false, safe:0, fed:0, hl:HUNGER_MS };
 }
 
 function reset() {
@@ -547,6 +554,7 @@ function reset() {
                                 : ids.map((_, i) => Math.floor((i + .5) * ROWS / ids.length));
   snakes = ids.map((id, i) => makeSnake(id, rows[i]));
   rocks = []; rockBorn.clear(); portals = [];
+  squeeze = G === 'squeeze' ? { ring: 0, left: [], wait: Math.round(SQUEEZE_START_MS / TICK) } : null;
   apples = rows.slice(0, 2).map(y => ({ x: COLS - 5, y })).slice(0, cfg.apples);
   if (G === 'portal') placePortals(rows);
   while (normalApples() < cfg.apples) spawnApple();
@@ -582,6 +590,76 @@ function occupied() {
 }
 
 const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield).length;
+
+// Runaway mode: every other move, apples near a head step one square away from it (cornered ones can't)
+function fleeApples() {
+  const heads = snakes.filter(s => s.alive).map(s => s.body[0]);
+  for (const a of apples) {
+    if (a.poison || a.locked) continue;
+    let near = null, nd = FLEE_RANGE + 1;
+    for (const h of heads) { const d = wrapDist(h, a); if (d < nd) { nd = d; near = h; } }
+    if (!near) continue;
+    const occ = occupied();
+    const opts = Object.keys(DIRS).map(d => step(a, d))
+      .filter(p => inBounds(p) && !occ.some(c => eq(c, p)) && portalAt(p) < 0 && wrapDist(near, p) > nd);
+    if (!opts.length) continue;
+    opts.sort((p, q) => wrapDist(near, q) - wrapDist(near, p));
+    a.x = opts[0].x; a.y = opts[0].y;
+  }
+}
+
+// Squeeze mode: after a while the outer ring of the board turns into wall, one square at a time,
+// then the next ring in, and so on (always leaving a small area in the middle)
+let squeeze = null;
+function ringCells(r) {
+  const out = [];
+  for (let y = r; y <= ROWS - 1 - r; y++) for (let x = r; x <= COLS - 1 - r; x++)
+    if (x === r || x === COLS - 1 - r || y === r || y === ROWS - 1 - r) out.push({ x, y });
+  return out;
+}
+function squeezeTick() {
+  const sq = squeeze, maxRing = Math.floor((Math.min(COLS, ROWS) - 6) / 2);
+  if (!sq || sq.ring >= maxRing) return;
+  if (sq.wait > 0) {
+    if (--sq.wait > 0) return;
+    sq.left = ringCells(sq.ring);
+    popup({ x: COLS / 2 - .5, y: ROWS / 2 - .5 }, 'Walls closing!', '#ffd0d0');
+    beep(140, .25, 0, 'sawtooth'); doShake();
+    return;
+  }
+  if (!sq.left.length) { sq.ring++; sq.wait = Math.round(SQUEEZE_PAUSE_MS / TICK); return; }
+  if (tickNo % 2) return;
+  // (a square with a snake on it waits until the snake has moved off)
+  const i = sq.left.findIndex(c => !snakes.some(s => s.alive && s.body.some(b => eq(b, c))) && bossAt(c) < 0);
+  if (i < 0) return;
+  const c = sq.left.splice(i, 1)[0];
+  // an apple on that square hops to a free one further in
+  const hit = apples.filter(a => eq(a, c));
+  if (hit.length) {
+    const occ = occupied();
+    const free = [];
+    for (let y = sq.ring + 1; y < ROWS - 1 - sq.ring; y++) for (let x = sq.ring + 1; x < COLS - 1 - sq.ring; x++)
+      if (!occ.some(o => o.x === x && o.y === y)) free.push({ x, y });
+    for (const a of hit) {
+      if (free.length) { const p = free.splice(Math.random() * free.length | 0, 1)[0]; a.x = p.x; a.y = p.y; }
+      else apples.splice(apples.indexOf(a), 1);
+    }
+    while (normalApples() < cfg.apples) if (!spawnApple()) break;
+  }
+  rocks.push({ x: c.x, y: c.y, wall: true });
+  burst(c, '#6d6f74', 3, 1.5);
+}
+
+// Hunger mode: a snake that goes 10 seconds without eating starves and is knocked out
+function hungerTick() {
+  for (const s of snakes) {
+    if (!s.alive) { s.fed = elapsed; s.hl = HUNGER_MS; continue; }
+    s.hl = Math.max(0, HUNGER_MS - (elapsed - (s.fed ?? elapsed)));
+    if (s.hl > 0) continue;
+    knockOut(s); popup(s.body[0], 'Starved!', '#ffd0a0');
+    s.hl = HUNGER_MS;
+  }
+}
 
 // Magnet mode: every other move, apples near a head slide one square toward the closest one
 function pullApples() {
@@ -870,7 +948,7 @@ function respawnSnake(s) {
     // (and not right next to a boss's head, so you don't get bitten the moment you're back)
     const awayFromBoss = !boss || tries > 350 || wrapDist(body[0], boss.body[0]) > 5;
     if (body.every(isFree) && ahead.every(isFree) && awayFromBoss) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0 });
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0, fed:elapsed, hl:HUNGER_MS });
       burst(body[0], skinHex(s.id), 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
@@ -990,6 +1068,9 @@ function tick() {
   if (statues.length) settleStatues();
   if (G === 'boss') bossTick();
   if (G === 'magnet' && tickNo % 2 === 0) pullApples();
+  if (G === 'runaway' && tickNo % 2 === 0) fleeApples();
+  if (G === 'squeeze') squeezeTick();
+  if (G === 'hunger') hungerTick();
   if (cfg.play === 'challenge') {
     const had = starsOf(stats.ch);
     stats.ch = Math.max(stats.ch, CHALLENGES[challenge].val());
@@ -1008,6 +1089,7 @@ function tick() {
 }
 
 function eatApple(s, a) {
+  s.fed = elapsed; s.hl = HUNGER_MS; // (hunger mode)
   if (a.shield) { // Shield mode: protects you from your next crash
     s.shield = true; s.eatFx = 1;
     burst(a, '#7fd4ff', 14, 3);
@@ -1984,7 +2066,7 @@ function sendState() {
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone,
-      shield:!!s.shield, safe:s.safe || 0 })),
+      shield:!!s.shield, safe:s.safe || 0, hl: Math.round(s.hl ?? HUNGER_MS) })),
     fx: outFx,
   };
   // Each friend also hears which player they are and which of their key presses have arrived
@@ -2079,6 +2161,7 @@ function cleanState(m) {
       const o = cellOf(p);
       if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue;
       else if (p && Number.isFinite(p.slime)) o.slime = int(p.slime, 1, 200); // a boss's slime puddle
+      else if (p && p.wall === true) o.wall = true; // a Squeeze wall
       return o;
     };
     const list = arr(m.snakes, MAX_PLAYERS);
@@ -2129,7 +2212,7 @@ function cleanState(m) {
           id: s.id, body, gone: s.gone === true, dir: dirOr(s.dir, 'right'), queue: arr(s.queue, 3).filter(d => has(DIRS, d)),
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
           pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1), moves: int(s.moves, 0, 1e9),
-          shield: s.shield === true, safe: int(s.safe, 0, 100),
+          shield: s.shield === true, safe: int(s.safe, 0, 100), hl: int(s.hl, 0, HUNGER_MS),
           log: arr(s.log, 8).map(r => r && typeof r === 'object'
             ? { tail: r.tail ? cellOf(r.tail) : null, turn: r.turn === true, ate: r.ate === true, ok: r.ok === true }
             : { tail: null, turn: false, ate: false, ok: false }),
@@ -2307,7 +2390,16 @@ function drawSlime(r, now) {
   ctx.globalAlpha = 1;
 }
 
+// A Squeeze wall: a solid dark block with a lighter edge
+function drawWall(r) {
+  const x = r.x * CELL, y = r.y * CELL;
+  ctx.fillStyle = '#4b4f57'; ctx.fillRect(x, y, CELL, CELL);
+  ctx.fillStyle = '#656a73'; ctx.fillRect(x + 2, y + 2, CELL - 4, CELL * .22);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.fillRect(x + 2, y + CELL * .72, CELL - 4, CELL * .26);
+}
+
 function drawRock(r, now) {
+  if (r.wall) return drawWall(r);
   if (r.slime !== undefined) return drawSlime(r, now);
   if (r.statue !== undefined) return drawStatue(r, now, false);
   const key = r.x + ',' + r.y;
@@ -2336,7 +2428,7 @@ function drawRock(r, now) {
 function drawApple(a, now) {
   const key = a.x + ',' + a.y + (a.poison ? 'p' : a.gold ? 'g' : a.key ? 'k' : '');
   // (in Magnet mode apples move around all the time, so they don't pop in again at every step)
-  if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, G === 'magnet' && !a.gold ? now - 1e4 : now); }
+  if (!appleBorn.has(key)) { if (appleBorn.size > 300) appleBorn.clear(); appleBorn.set(key, (G === 'magnet' || G === 'runaway') && !a.gold ? now - 1e4 : now); }
   const t = Math.min(1, (now - appleBorn.get(key)) / 320), u = t - 1;
   const pop = 1 + 2.7 * u * u * u + 1.7 * u * u;
   if (pop <= 0) return;
@@ -2760,6 +2852,18 @@ function bossHint() {
   return bossNext > 0 && state !== 'ready' ? `Next boss: ${B.icon} ${B.name} in ${Math.ceil(bossNext * TICK / 1000)}s…` : 'Bite the boss on its glowing tail — avoid the rest of it!';
 }
 
+// Hunger mode: a little bar under each snake's head that runs down (and turns red) until it eats
+function drawHunger() {
+  for (const s of snakes) {
+    if (!s.alive) continue;
+    const L = looks[s.id], f = Math.max(0, Math.min(1, (s.hl ?? HUNGER_MS) / HUNGER_MS));
+    const w = CELL * 1.1, h = CELL * .13, x = L.hx - w / 2, y = L.hy + CELL * .62;
+    ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+    ctx.fillStyle = f > .5 ? '#7bd44a' : f > .25 ? '#f2c230' : '#e8483a';
+    ctx.fillRect(x, y, w * f, h);
+  }
+}
+
 // Emote bubbles float above each snake's head
 function drawEmotes(now) {
   // Versus: a bobbing crown over whoever is in the lead
@@ -2934,6 +3038,7 @@ function frame(now) {
   drawPortals(now, true);
   snakes.forEach(s => { s.eatFx = Math.max(0, s.eatFx - .06 * frameK); });
   drawEffects(frameK);
+  if (G === 'hunger') drawHunger();
   if (G === 'light') drawDark(now);
   drawEmotes(now);
   ctx.restore();
