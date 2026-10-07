@@ -4,10 +4,34 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Co-op Snake</title>
-<!-- Pinned with a hash so a tampered copy from the CDN is refused -->
-<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"
-  integrity="sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR"
-  crossorigin="anonymous"></script>
+<script>
+// The online library (PeerJS) is pinned with a hash, so a tampered copy from a CDN is refused. It loads in the
+// background (the page doesn't wait for it), and if one server is slow or blocked, the next one is tried: all
+// three serve the exact same file.
+window.loadPeerLib = (() => {
+  const HASH = 'sha384-nlUQ8ZqCbvStErob+biJNzSgltf6urV3VGqhfIfzhmg9RXmpeRm76ELw0pYnKlTR';
+  const URLS = ['https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js', 'https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js',
+                'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js'];
+  let running = null;
+  const tryOne = url => new Promise(done => {
+    const s = document.createElement('script');
+    const t = setTimeout(() => done(!!window.Peer), 7000);
+    s.src = url; s.integrity = HASH; s.crossOrigin = 'anonymous';
+    s.onload = () => { clearTimeout(t); done(!!window.Peer); };
+    s.onerror = () => { clearTimeout(t); s.remove(); done(false); };
+    document.head.appendChild(s);
+  });
+  return () => {
+    if (window.Peer) return Promise.resolve(true);
+    if (!running) running = (async () => {
+      for (const u of URLS) { if (await tryOne(u)) return true; }
+      return !!window.Peer;
+    })().finally(() => { running = null; });
+    return running;
+  };
+})();
+window.loadPeerLib();
+</script>
 <style>
   :root { --header:#4a752c; --border:#578a34; --p1:#4e7cf6; --p2:#a855f7; --p3:#f97316; --p4:#14b8a6; }
   * { box-sizing:border-box; }
@@ -170,6 +194,9 @@
         </div>
         <div class="online menu-only" id="onlinePanel" hidden>
           <div id="onIdle" class="online">
+            <div class="row">
+              <button class="btn" id="quickBtn" title="Joins an open public game, or starts one if there isn't any" style="padding:8px 22px;font-size:15px">⚡ Quick play</button>
+            </div>
             <div class="row">
               <button class="btn2" id="hostPubBtn" title="Anyone can see it in the list below and join">🌍 Host public game</button>
               <button class="btn2" id="hostBtn" title="Only people you give the code to can join">🔒 Host private game</button>
@@ -417,10 +444,15 @@ let mySlot2 = -1;      // guest: my second player's slot (-1 = none)
 let wantTwo = false;   // the "2 players on this keyboard" box
 const lastSeq = {};    // host: slot -> newest key press received from that friend
 const pings = {};      // host: slot -> that friend's connection delay
+const lastHeard = {};  // host: slot -> when we last heard anything from that friend
+let roomPublic = false; // guest: is this a public room? (then only the host starts and pauses games)
+const kickedPeers = new Set(); // host: players removed from this room (they can't come straight back)
+let lastHostMsg = 0;   // guest: when we last heard anything from the host
+const LIVE_MS = 15000; // someone who's been silent this long is gone (closed laptop, lost wifi...) even if the browser hasn't noticed
 let recording = false, outFx = [], inputSeq = 0, unacked = [], forceOverlay = false;
 let inbox = [], applyAt = 0, lastN = -1, pingMs = null;
-const PEER_PREFIX = 'coop-snake-v6-';
-const GAME_VERSION = '6.0'; // shown in the lobby, so friends can check they have the newest version
+const PEER_PREFIX = 'coop-snake-v7-';
+const GAME_VERSION = '7.0'; // shown in the lobby, so friends can check they have the newest version
 
 const bestKey = () => `coopSnakeBest:${cfg.speed}-${cfg.apples}-${cfg.board}-${cfg.mode}-${cfg.game}${uiMode === 'solo' ? '-solo' : ''}`;
 const maxRewind = () => Math.max(2, Math.ceil(REWIND_MS / TICK));
@@ -1326,7 +1358,10 @@ function introText() {
     Every round is a new goal — hit the targets for up to 3 ★!`;
   return INTRO;
 }
-function showIntro() { showOverlay(uiMode === 'solo' ? 'Snake' : cfg.play === 'versus' ? 'Versus Snake' : 'Co-op Snake', introText(), role === 'guest' ? 'Start' : 'Play'); }
+function showIntro() {
+  const wait = role === 'guest' && roomPublic ? '⏳ Waiting for the host to start the game…<br>' : '';
+  showOverlay(uiMode === 'solo' ? 'Snake' : cfg.play === 'versus' ? 'Versus Snake' : 'Co-op Snake', wait + introText(), role === 'guest' ? 'Start' : 'Play');
+}
 
 const fanfare = () => { confetti(); beep(784, .1); beep(988, .1, .1); beep(1319, .2, .2); };
 const dotOf = id => `<span class="dot" style="background:${skinHex(id)}"></span>`;
@@ -1656,7 +1691,9 @@ function renderMenu() {
   $('onlinePanel').hidden = !online;
   $('onIdle').hidden = role !== 'local';
   $('leaveBtn').hidden = role === 'local';
-  $('play').hidden = online && !on;
+  const hostOnly = role === 'guest' && roomPublic; // public room: the host runs the game
+  $('play').hidden = (online && !on) || hostOnly;
+  $('quit').hidden = hostOnly;
   document.querySelectorAll('select[data-key]').forEach(sel => { sel.disabled = role === 'guest'; });
   document.querySelector('select[data-key=play] option[value=versus]').disabled = uiMode === 'solo';
   $('keys').hidden = online && !on;
@@ -1701,7 +1738,7 @@ $('modeSeg').addEventListener('click', e => {
   skins = startingSkins();
   fixClash();
   state = 'ready'; reset(); showIntro(); applySkins();
-  if (uiMode === 'online') { renderLobby(); lobbyStart(); } else lobbyStop();
+  if (uiMode === 'online') { renderLobby(); lobbyStartAll(); } else lobbyStopAll();
 });
 
 function makeCode() {
@@ -1718,10 +1755,23 @@ function waitingStatus(prefix) {
     (canInvite ? `<button class="btn2 invite" id="copyInvite">Copy invite link</button>` : '') +
     (n ? `<br><b>${playerSlots().length} of ${MAX_PLAYERS} players</b> in the room.` +
          (freeSlot() !== undefined ? ` More friends can still join with the ${canInvite ? 'link or code' : 'code'}.` : '') +
-         ` Press Play when everyone's in!`
+         ` Press Play when everyone's in!` +
+         // the host can remove a player (e.g. someone who isn't playing in a public room)
+         `<br><small>Remove a player: ${Object.keys(conns).filter(k => conns[k].open).map(k =>
+           `<button class="btn2 invite" data-kick="${k}" title="Remove this player from the room">✖ P${+k + 1}</button>`).join('')}</small>`
        : `<br>Send the ${canInvite ? 'link or code' : 'code'} to up to ${MAX_PLAYERS - 1} friends. Waiting for them to join…`));
 }
+// Host: remove a player from the room (and keep them from coming straight back)
+function kickSlot(slot) {
+  const c = conns[slot];
+  if (role !== 'host' || !c) return;
+  if (c.peer) kickedPeers.add(c.peer);
+  sendTo(c, { t: 'kicked' });
+  setTimeout(() => { try { c.close(); } catch (e) {} }, 250);
+}
 $('onStatus').addEventListener('click', e => {
+  const k = e.target.closest('[data-kick]');
+  if (k) return kickSlot(+k.dataset.kick);
   const b = e.target.closest('#copyInvite');
   if (!b) return;
   const url = `${location.origin}${location.pathname}#join=${roomCode}`;
@@ -1761,11 +1811,28 @@ function hostSetTwo(slot, on, skin) {
   updateHud(); sendState(); postRoom();
 }
 
-function hostGame(isPublic) {
-  if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
+function guestId() {
+  try {
+    let g = localStorage.getItem('coopSnakeGuestId');
+    if (!/^[a-z0-9]{16}$/.test(g || '')) {
+      const A = 'abcdefghijklmnopqrstuvwxyz0123456789';
+      g = Array.from(crypto.getRandomValues(new Uint32Array(16)), n => A[n % A.length]).join('');
+      localStorage.setItem('coopSnakeGuestId', g);
+    }
+    return PEER_PREFIX + 'g-' + g;
+  } catch (e) { return undefined; } // (no storage: a random ID is picked instead)
+}
+
+const NO_LIB ="Couldn't load the online library. Check your internet connection (some school or work networks block it).";
+
+async function hostGame(isPublic) {
+  if (!window.Peer) {
+    setStatus('Loading the online library…');
+    if (!(await loadPeerLib())) return setStatus(NO_LIB);
+  }
   if (peer) try { peer.destroy(); } catch (e) {}
-  role = 'host'; roomCode = makeCode(); conn = null; pingMs = null;
-  publicRoom = isPublic === true;
+  role = 'host'; roomCode = makeCode(); conn = null; pingMs = null; signalLost = false;
+  publicRoom = isPublic === true; listedAt = -1e9; kickedPeers.clear();
   roomName = [Math.random() * ADJS.length | 0, Math.random() * ANIMALS.length | 0];
   for (const k in conns) delete conns[k];
   for (const k in pings) delete pings[k];
@@ -1774,24 +1841,41 @@ function hostGame(isPublic) {
   skins = startingSkins(); fixClash();
   state = 'ready'; reset(); showIntro();
   setStatus('Creating room…'); applySkins();
-  peer = new Peer(PEER_PREFIX + roomCode, { debug:0 });
+  const myPeer = peer = new Peer(PEER_PREFIX + roomCode, peerOpts());
+  setTimeout(() => { if (peer === myPeer && !myPeer.open && role === 'host') leaveOnline("Couldn't reach the matchmaking server. Check your internet connection and try again."); }, 15000);
+  keepSignalling(myPeer, () => peer === myPeer);
   peer.on('open', () => { waitingStatus(); postRoom(); });
   peer.on('connection', c => {
-    // Each friend gets the lowest free player slot (1–3)
+    // Each friend gets the lowest free player slot
     const slot = freeSlot();
-    if (!slot) { c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); }); return; }
+    // (a few half-finished connections at most, so nobody can tie up the room just by knocking)
+    const waiting = Object.values(conns).filter(x => !x.open).length;
+    if (kickedPeers.has(c.peer)) { // (tell them why, then close)
+      c.on('open', () => { sendTo(c, { t: 'kicked' }); setTimeout(() => { try { c.close(); } catch (e) {} }, 300); });
+      return;
+    }
+    if (slot === undefined || waiting >= 3) {
+      if (slot === undefined) c.on('open', () => { c.send({ t:'full' }); setTimeout(() => c.close(), 300); });
+      else try { c.close(); } catch (e) {}
+      return;
+    }
     conns[slot] = c;
+    // A connection that never finishes opening gives its slot back (instead of holding it forever)
+    const stale = setTimeout(() => { if (conns[slot] === c && !c.open) { delete conns[slot]; try { c.close(); } catch (e) {} } }, 20000);
     c.on('open', () => {
+      clearTimeout(stale);
       if (conns[slot] !== c) return;
-      lastSeq[slot] = 0;
+      lastSeq[slot] = 0; lastHeard[slot] = performance.now();
       skins[slot] = { ...DEFAULT_SKINS[slot] }; fixClash(); applySkins();
       // In the menu, the new snake appears straight away; mid-game, they join at the next round
       if (state === 'ready' || state === 'over') { state = 'ready'; reset(); showIntro(); }
       waitingStatus();
       renderMenu(); sendState(); postRoom();
     });
-    c.on('data', m => { if (conns[slot] === c) onHostData(slot, m); });
+    c.on('data', m => { if (conns[slot] === c) { lastHeard[slot] = performance.now(); onHostData(slot, m); } });
+    c.on('error', () => {});
     c.on('close', () => {
+      clearTimeout(stale);
       if (conns[slot] !== c) return;
       const two = seat2[slot];
       delete conns[slot]; delete pings[slot]; delete seat2[slot];
@@ -1805,32 +1889,47 @@ function hostGame(isPublic) {
       updateHud(); sendState();
     });
   });
-  peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
   peer.on('error', e => {
-    if (e.type === 'unavailable-id') hostGame(publicRoom);
-    else if (connected()) { try { peer.reconnect(); } catch (err) {} } // a matchmaking hiccup; the game itself is fine
-    else if (e.type !== 'peer-unavailable') leaveOnline(`Online error (${e.type}). Try again.`);
+    if (peer !== myPeer) return;
+    if (e.type === 'unavailable-id') return hostGame(publicRoom); // (the random code was taken: pick another)
+    if (e.type === 'peer-unavailable') return;
+    // Real problems end the room; a hiccup with the matchmaking server just means reconnecting (keepSignalling does that)
+    if (['browser-incompatible', 'invalid-id', 'invalid-key', 'ssl-unavailable', 'webrtc'].includes(e.type))
+      leaveOnline(`Online error (${e.type}). Try again.`);
   });
 }
 
-function joinGame(code) {
+async function joinGame(code, attempt = 1) {
   code = String(code || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (code.length !== 6) return setStatus('Enter the 6-character room code.');
   if (document.activeElement) document.activeElement.blur(); // so the keys steer instead of typing
-  if (!window.Peer) return setStatus("Couldn't load the online library — check your internet connection.");
+  if (!window.Peer) {
+    setStatus('Loading the online library…');
+    if (!(await loadPeerLib())) return setStatus(NO_LIB);
+  }
   if (peer) try { peer.destroy(); } catch (e) {}
-  role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null;
+  role = 'guest'; roomCode = code; inputSeq = 0; unacked = []; conn = null; signalLost = false; roomPublic = false;
   inbox = []; lastN = -1; pingMs = null; mySlot = 1; mySlot2 = -1;
   skins = copySkins();
-  setStatus('Connecting…'); applySkins();
-  const myPeer = peer = new Peer({ debug:0 });
-  const timeout = setTimeout(() => {
-    if (peer === myPeer && !connected()) leaveOnline(`Couldn't reach room ${code}. Check the code and try again.`);
-  }, 15000);
+  setStatus(attempt > 1 ? `Trying again to reach room <b>${code}</b>…` : `Connecting to room <b>${code}</b>… (this can take up to 20 seconds)`);
+  applySkins();
+  // A steady random ID for this browser (so a kick from a room holds); a fresh one on the retry, in case it's in use in another tab
+  const myPeer = peer = new Peer(attempt === 1 ? guestId() : undefined, peerOpts());
+  let finished = false;
+  // Couldn't connect: try once more (a room that was only just created, or a hiccup, often works the second time)
+  const giveUp = why => {
+    if (finished || peer !== myPeer) return;
+    finished = true; clearTimeout(timeout);
+    if (attempt < 2) { try { myPeer.destroy(); } catch (e) {} setTimeout(() => { if (role === 'guest' && roomCode === code) joinGame(code, 2); }, why === 'notfound' ? 1500 : 0); return; }
+    leaveOnline(why === 'notfound'
+      ? `Room <b>${code}</b> not found. Check the code — the host may have left, or they may have an older version of the game (everyone press Ctrl+F5).`
+      : `Couldn't connect to room <b>${code}</b>. Usually this means one of your networks blocks direct connections (some mobile data and school or work Wi-Fi do). Try another network, or ask your friend to join you instead.`);
+  };
+  const timeout = setTimeout(() => giveUp('timeout'), 20000);
   peer.on('open', () => {
-    const c = conn = peer.connect(PEER_PREFIX + code, { reliable:true, serialization:'json' });
+    const c = conn = peer.connect(PEER_PREFIX + code, { reliable: true, serialization: 'json' });
     c.on('open', () => {
-      clearTimeout(timeout);
+      finished = true; clearTimeout(timeout); lastHostMsg = performance.now();
       forceOverlay = true;
       setStatus(`Connected to room <b>${code}</b>! Waiting for the host to start…`);
       renderMenu();
@@ -1839,6 +1938,7 @@ function joinGame(code) {
       if (wantTwo) send({ t:'two', on:true, c: savedSkins.online2.c, p: savedSkins.online2.p });
     });
     c.on('data', m => {
+      lastHostMsg = performance.now();
       if (!m || typeof m !== 'object') return;
       if (m.t === 'state') {
         const clean = cleanState(m);
@@ -1853,21 +1953,25 @@ function joinGame(code) {
         const rtt = performance.now() - m.ts;
         if (Number.isFinite(rtt) && rtt >= 0 && rtt < 60000) { pingMs = Math.round(rtt); renderPing(); }
       } else if (m.t === 'full') leaveOnline('That room is already full.');
+      else if (m.t === 'kicked') leaveOnline('The host removed you from the room.');
       else if (m.t === 'nofree') { wantTwo = false; renderMenu(); setStatus(`Connected to room <b>${code}</b>. The room is full, so there's no space for a second player.`); }
     });
-    c.on('close', () => { if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.'); });
+    c.on('error', () => giveUp('error'));
+    c.on('close', () => {
+      if (!finished) return giveUp('closed'); // it never got connected
+      if (role === 'guest' && conn === c) leaveOnline('Disconnected from the host.');
+    });
   });
   peer.on('error', e => {
-    if (peer !== myPeer || connected()) return; // after connecting, only the game connection matters
-    clearTimeout(timeout);
-    leaveOnline(e.type === 'peer-unavailable' ? `Room <b>${code}</b> not found.` : `Online error (${e.type}). Try again.`);
+    if (peer !== myPeer || finished) return; // after connecting, only the game connection matters
+    giveUp(e.type === 'peer-unavailable' ? 'notfound' : 'error');
   });
 }
 
 function leaveOnline(msg) {
   const oldConn = conn, oldPeer = peer;
   if (role === 'host') unpostRoom();
-  role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1; mySlot2 = -1; publicRoom = false;
+  role = 'local'; conn = null; peer = null; pingMs = null; inbox = []; lastN = -1; mySlot2 = -1; publicRoom = false; roomPublic = false;
   for (const k in seat2) delete seat2[k];
   try { oldConn && oldConn.close(); } catch (e) {}
   try { oldPeer && oldPeer.destroy(); } catch (e) {}
@@ -1880,22 +1984,49 @@ function leaveOnline(msg) {
   setStatus(msg || ''); renderPubNote();
 }
 
+// ---------- Connection helpers ----------
+// More than one STUN server (they help two players behind routers find each other). All of these were checked.
+const ICE_SERVERS = [
+  { urls: 'stun:stun.l.google.com:19302' }, { urls: 'stun:stun1.l.google.com:19302' }, { urls: 'stun:stun2.l.google.com:19302' },
+  { urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:global.stun.twilio.com:3478' }, { urls: 'stun:stun.nextcloud.com:443' },
+];
+const peerOpts = () => ({ debug: 0, config: { iceServers: ICE_SERVERS, iceCandidatePoolSize: 4 } });
+
+// If the connection to the matchmaking server drops, keep trying to get it back (with growing pauses).
+// (A host who loses it can't be found by new players, but the players already in the room are fine.)
+let signalLost = false;
+function keepSignalling(p, isCurrent) {
+  let tries = 0;
+  p.on('open', () => { tries = 0; if (isCurrent() && p === peer && signalLost) { signalLost = false; if (role === 'host') waitingStatus(); } });
+  p.on('disconnected', () => {
+    if (isCurrent() && p === peer) { signalLost = true; if (role === 'host') waitingStatus('⚠ Lost contact with the matchmaking server — reconnecting… '); }
+    const again = () => {
+      if (!isCurrent() || p.destroyed || !p.disconnected) return;
+      try { p.reconnect(); } catch (e) {}
+      setTimeout(again, Math.min(10000, 1500 * ++tries));
+    };
+    setTimeout(again, 500);
+  });
+}
+
 // ---------- Public lobby ----------
-// There's no game server, so one player's browser keeps the list of public rooms: whoever claims the lobby
-// ID first. Everyone else in the online menu connects to it to read the list, and public hosts post their
-// room every few seconds. If that browser leaves, the next one to notice takes over.
+// There's no game server, so a couple of players' browsers keep the list of public rooms (the "keepers"):
+// each claims a lobby ID, everyone else in the online menu connects to read the list, and public hosts post
+// their room every few seconds. There are two lobbies, usually kept by different people, so one person's
+// bad connection can't break the list for everybody. If a keeper leaves, someone else takes over.
 // Rooms only have made-up names picked from the lists below (no typed text), and everything is checked.
-const LOBBY_ID = PEER_PREFIX + 'lobby';
 const ADJS = ['Happy', 'Speedy', 'Sneaky', 'Brave', 'Sleepy', 'Jolly', 'Mighty', 'Tiny', 'Fuzzy', 'Lucky', 'Wiggly', 'Sunny'];
 const ANIMALS = ['Snakes', 'Pythons', 'Cobras', 'Vipers', 'Worms', 'Lizards', 'Geckos', 'Newts', 'Frogs', 'Turtles', 'Dragons', 'Eels'];
 const PLAY_NAMES = { coop:'Co-op', challenge:'Challenges', versus:'Versus' };
 const roomTitle = n => `${ADJS[n[0]]} ${ANIMALS[n[1]]}`;
 const CODE_RE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{6}$/;
 const ROOM_TTL = 10000; // a room that hasn't posted for this long is dropped from the list
-let publicRoom = false, roomName = [0, 0];
-let lobbyPeer = null, lobbyConn = null, lobbyKeeper = false, lobbyRooms = [], lobbyTries = 0, lobbyTimer = null;
-const keptRooms = new Map(); // (list keeper) code -> room, plus who posted it and when
-let lobbyLinks = 0;
+let publicRoom = false, roomName = [0, 0], listedAt = -1e9;
+const lobbies = [0, 1].map(i => ({ id: `${PEER_PREFIX}lobby-${i}`, peer: null, conn: null, keeper: false, claiming: false,
+  rooms: [], online: 1, tries: 0, timer: null, links: 0, linkSet: new Set(), heard: 0, kept: new Map() }));
+const keeperCount = () => lobbies.filter(L => L.keeper || L.claiming).length;
+const lobbyReady = L => L.keeper || !!(L.conn && L.conn.open);
+const anyLobbyReady = () => lobbies.some(lobbyReady);
 
 function cleanRoom(r) {
   if (!r || typeof r !== 'object' || typeof r.code !== 'string' || !CODE_RE.test(r.code)) return null;
@@ -1904,127 +2035,162 @@ function cleanRoom(r) {
   return { code: r.code, name: [n[0], n[1]], n: int(r.n, 1, MAX_PLAYERS), game: has(GAMES, r.game) ? r.game : 'classic',
            play: has(PLAYS, r.play) ? r.play : 'coop', live: r.live === true };
 }
-function roomList() {
+function keptList(L) {
   const now = performance.now();
-  for (const [k, r] of keptRooms) if (now - r.at > ROOM_TTL) keptRooms.delete(k);
-  return [...keptRooms.values()].map(cleanRoom).filter(Boolean).slice(0, 30);
+  for (const [k, r] of L.kept) if (now - r.at > ROOM_TTL) L.kept.delete(k);
+  return [...L.kept.values()].map(cleanRoom).filter(Boolean).slice(0, 30);
+}
+// Every public room from every lobby I can see (without my own)
+function allRooms() {
+  const seen = new Map();
+  for (const L of lobbies) for (const r of (L.keeper ? keptList(L) : L.rooms)) if (r.code !== roomCode && !seen.has(r.code)) seen.set(r.code, r);
+  return [...seen.values()];
 }
 
-function lobbyStart() {
-  if (lobbyPeer || !window.Peer || uiMode !== 'online') return;
-  const p = lobbyPeer = new Peer(LOBBY_ID, { debug:0 });
-  p.on('open', () => { if (lobbyPeer !== p) return; lobbyKeeper = true; lobbyTries = 0; renderLobby(); postRoom(); });
-  p.on('connection', c => { // someone wants the list
-    if (lobbyLinks >= 200) { setTimeout(() => { try { c.close(); } catch (e) {} }, 0); return; }
-    lobbyLinks++;
-    c.budget = 5; c.at = performance.now();
-    c.on('data', m => keeperData(c, m));
-    c.on('close', () => {
-      lobbyLinks--;
-      for (const [k, r] of keptRooms) if (r.by === c.peer) keptRooms.delete(k);
-    });
-  });
-  p.on('error', e => {
-    if (lobbyPeer !== p) return;
-    if (e.type === 'unavailable-id') { lobbyStop(); lobbyJoin(); } // someone else keeps the list: read it from them
-    else if (!lobbyKeeper) lobbyRetry();
-  });
-  p.on('disconnected', () => { if (lobbyPeer === p) try { p.reconnect(); } catch (e) {} });
-}
-
-function lobbyJoin() {
-  if (lobbyPeer || !window.Peer) return;
-  const p = lobbyPeer = new Peer({ debug:0 });
-  p.on('open', () => {
-    if (lobbyPeer !== p) return;
-    const c = lobbyConn = p.connect(LOBBY_ID, { reliable:true, serialization:'json' });
-    // If the connection never opens (it can just hang), give up and try again rather than waiting forever
-    setTimeout(() => { if (lobbyConn === c && !c.open) lobbyRetry(); }, 8000);
-    c.on('open', () => { lobbyTries = 0; lobbyAsk(); postRoom(); renderLobby(); });
-    c.on('data', m => {
-      if (lobbyConn !== c || !m || typeof m !== 'object') return;
-      if (m.t === 'listed') { if (m.code === roomCode) { listedAt = performance.now(); renderPubNote(); } return; }
-      if (m.t !== 'rooms') return;
-      lobbyRooms = arr(m.rooms, 30).map(cleanRoom).filter(Boolean);
-      renderLobby();
-    });
-    c.on('close', () => { if (lobbyConn === c) lobbyRetry(); }); // the keeper left: try to take over
-  });
-  p.on('error', () => { if (lobbyPeer === p) lobbyRetry(); });
-}
-
-function lobbyStop() {
-  const p = lobbyPeer;
-  lobbyPeer = null; lobbyConn = null; lobbyKeeper = false; lobbyLinks = 0;
+function lobbyStopPeer(L) {
+  const p = L.peer;
+  L.peer = null; L.conn = null; L.keeper = false; L.claiming = false; L.links = 0; L.linkSet.clear(); L.kept.clear();
   try { p && p.destroy(); } catch (e) {}
 }
+function lobbyStopAll() { for (const L of lobbies) { lobbyStopPeer(L); clearTimeout(L.timer); L.timer = null; L.tries = 0; L.rooms = []; } }
 // Try again a bit later (a random wait, so everyone doesn't grab the lobby at the same moment)
-function lobbyRetry() {
-  lobbyStop();
-  clearTimeout(lobbyTimer);
-  lobbyTimer = setTimeout(() => { lobbyTimer = null; lobbyStart(); }, Math.min(15000, 800 * 2 ** lobbyTries++) * rand(.6, 1.3));
+function lobbyRetry(L) {
+  lobbyStopPeer(L);
+  clearTimeout(L.timer);
+  L.timer = setTimeout(() => { L.timer = null; lobbyStart(L); }, Math.min(15000, 800 * 2 ** L.tries++) * rand(.6, 1.3));
+  renderLobby();
+}
+function lobbyStartAll() { for (const L of lobbies) lobbyStart(L); }
+
+function lobbyStart(L) {
+  if (L.peer || L.timer || !window.Peer || uiMode !== 'online') return;
+  // One person keeps at most one lobby (so the keepers are different people), unless this one has been empty a while
+  if (keeperCount() >= 1 && L.tries < 2) return lobbyJoin(L);
+  L.claiming = true;
+  const p = L.peer = new Peer(L.id, peerOpts());
+  setTimeout(() => { if (L.peer === p && !L.keeper) lobbyRetry(L); }, 12000);
+  p.on('open', () => { if (L.peer !== p) return; L.keeper = true; L.claiming = false; L.tries = 0; renderLobby(); postRoom(); });
+  p.on('connection', c => keeperLink(L, c));
+  p.on('error', e => {
+    if (L.peer !== p) return;
+    L.claiming = false;
+    if (e.type === 'unavailable-id') { lobbyStopPeer(L); lobbyJoin(L); } // someone else keeps it: read it from them
+    else if (!L.keeper) lobbyRetry(L);
+  });
+  keepSignalling(p, () => L.peer === p);
 }
 
-// Keeper: messages from someone connected to the lobby (untrusted, and limited to a few per second)
-function keeperData(c, m) {
+function lobbyJoin(L) {
+  if (L.peer || !window.Peer) return;
+  const p = L.peer = new Peer(peerOpts());
+  const bail = () => { if (L.peer === p) lobbyRetry(L); };
+  // If any step just hangs, give up and try again rather than waiting forever
+  setTimeout(() => { if (L.peer === p && !lobbyReady(L)) bail(); }, 14000);
+  p.on('open', () => {
+    if (L.peer !== p) return;
+    const c = L.conn = p.connect(L.id, { reliable: true, serialization: 'json' });
+    c.on('open', () => { L.tries = 0; L.heard = performance.now(); lobbyAsk(L); postRoom(); renderLobby(); });
+    c.on('data', m => {
+      if (L.conn !== c || !m || typeof m !== 'object') return;
+      L.heard = performance.now();
+      if (m.t === 'listed') { if (m.code === roomCode) { listedAt = performance.now(); renderPubNote(); } return; }
+      if (m.t !== 'rooms') return;
+      L.rooms = arr(m.rooms, 30).map(cleanRoom).filter(Boolean);
+      L.online = int(m.online, 1, 9999);
+      renderLobby();
+    });
+    c.on('close', bail); // the keeper left: try to take over
+    c.on('error', bail);
+  });
+  p.on('error', bail);
+  keepSignalling(p, () => L.peer === p);
+}
+
+// Keeper: someone connected to the lobby
+function keeperLink(L, c) {
+  if (L.links >= 200) { setTimeout(() => { try { c.close(); } catch (e) {} }, 0); return; }
+  L.links++; L.linkSet.add(c);
+  c.budget = 5; c.at = c.seen = performance.now();
+  c.on('data', m => { c.seen = performance.now(); keeperData(L, c, m); });
+  c.on('close', () => {
+    L.links--; L.linkSet.delete(c);
+    for (const [k, r] of L.kept) if (r.by === c.peer) L.kept.delete(k);
+    renderLobby();
+  });
+}
+// Keeper: messages from someone in the lobby (untrusted, and limited to a few per second)
+function keeperData(L, c, m) {
   const now = performance.now();
   c.budget = Math.min(5, c.budget + (now - c.at) / 1000 * 3); c.at = now;
   if (c.budget < 1 || !m || typeof m !== 'object') return;
   c.budget--;
-  if (m.t === 'list') sendTo(c, { t:'rooms', rooms: roomList() });
+  if (m.t === 'list') sendTo(c, { t: 'rooms', rooms: keptList(L), online: 1 + L.links });
   else if (m.t === 'post') {
     const r = cleanRoom(m.room);
     if (!r) return;
-    const old = keptRooms.get(r.code);
+    const old = L.kept.get(r.code);
     if (old && old.by !== c.peer) return; // only the room's own host can update it
-    if (!old && keptRooms.size >= 50) return;
-    keptRooms.set(r.code, { ...r, by: c.peer, at: now });
-    sendTo(c, { t:'listed', code: r.code }); // so the host can show that it worked
+    if (!old && L.kept.size >= 50) return;
+    L.kept.set(r.code, { ...r, by: c.peer, at: now });
+    sendTo(c, { t: 'listed', code: r.code }); // so the host can show that it worked
     renderLobby();
   } else if (m.t === 'gone' && typeof m.code === 'string') {
-    const old = keptRooms.get(m.code);
-    if (old && old.by === c.peer) { keptRooms.delete(m.code); renderLobby(); }
+    const old = L.kept.get(m.code);
+    if (old && old.by === c.peer) { L.kept.delete(m.code); renderLobby(); }
   }
 }
 
-function lobbyAsk() { if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'list' }); }
+function lobbyAsk(L) { if (L.conn && L.conn.open) sendTo(L.conn, { t: 'list' }); }
 
-// Public host: put (or keep) my room in the list
+// Public host: put (or keep) my room in every lobby I can reach
 function postRoom() {
   if (role !== 'host' || !publicRoom || !peer || !peer.open) return;
   const room = { code: roomCode, name: roomName, n: playerSlots().length, game: cfg.game, play: cfg.play,
                  live: state !== 'ready' && state !== 'over' };
-  if (lobbyKeeper) { keptRooms.set(roomCode, { ...room, by: 'me', at: performance.now() }); listedAt = performance.now(); renderLobby(); }
-  else if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'post', room });
-  renderPubNote();
+  const now = performance.now();
+  for (const L of lobbies) {
+    if (L.keeper) { L.kept.set(roomCode, { ...room, by: 'me', at: now }); listedAt = now; }
+    else if (L.conn && L.conn.open) sendTo(L.conn, { t: 'post', room });
+  }
+  renderLobby(); renderPubNote();
+}
+function unpostRoom() {
+  if (!publicRoom) return;
+  for (const L of lobbies) {
+    if (L.keeper) L.kept.delete(roomCode);
+    else if (L.conn && L.conn.open) sendTo(L.conn, { t: 'gone', code: roomCode });
+  }
 }
 // Public host: show whether the room really is in the list right now
-let listedAt = -1e9;
 function renderPubNote() {
   const el = $('pubNote');
   el.hidden = !(role === 'host' && publicRoom);
   if (el.hidden) return;
   el.textContent = performance.now() - listedAt < 8000
     ? '✓ Listed in Public games — anyone in the Online menu can see it and join'
-    : lobbyTries > 2 ? "⚠ Can't reach the public list right now — retrying. Friends can still join with the code."
+    : lobbies.every(L => L.tries > 2) ? "⚠ Can't reach the public list right now — retrying. Friends can still join with the code."
     : 'Adding your room to the public list…';
 }
-function unpostRoom() {
-  if (!publicRoom) return;
-  if (lobbyKeeper) keptRooms.delete(roomCode);
-  else if (lobbyConn && lobbyConn.open) sendTo(lobbyConn, { t:'gone', code: roomCode });
-}
 
+function lobbyStatus() {
+  if (anyLobbyReady()) {
+    const online = Math.max(...lobbies.filter(lobbyReady).map(L => L.keeper ? 1 + L.links : L.online));
+    return `🟢 Connected · ${online} ${online === 1 ? 'player' : 'players'} in the lobby`;
+  }
+  return lobbies.every(L => L.tries > 2) ? "🟠 Can't reach the lobby right now — still trying. You can still join with a code."
+    : '⏳ Connecting to the lobby…';
+}
+let lobbyHtml = '';
 function renderLobby() {
-  const rooms = (lobbyKeeper ? roomList() : lobbyRooms).filter(r => r.code !== roomCode);
-  const ready = lobbyKeeper || (lobbyConn && lobbyConn.open);
-  $('lobby').innerHTML = `<h3>🌍 Public games <small style="opacity:.6;font-weight:400">· version ${GAME_VERSION}</small></h3>` + (rooms.length
+  const rooms = allRooms();
+  const html = `<h3>🌍 Public games <small style="opacity:.6;font-weight:400">· version ${GAME_VERSION}</small></h3>
+    <div class="empty" style="margin-bottom:4px">${lobbyStatus()}</div>` + (rooms.length
     ? rooms.map(r => `<div class="room"><span><b>${roomTitle(r.name)}</b><br>
         <small>${GAME_NAMES[r.game]} · ${PLAY_NAMES[r.play]} · ${r.n}/${MAX_PLAYERS} players${r.live ? ' · playing now' : ''}</small></span>
         <button class="btn2" data-join="${r.code}"${r.n >= MAX_PLAYERS ? ' disabled' : ''}>${r.n >= MAX_PLAYERS ? 'Full' : 'Join'}</button></div>`).join('')
-    : `<div class="empty">${ready ? 'No public games right now — host one!'
-        : lobbyTries > 2 ? "Can't reach the public list right now — still trying. You can still join with a code."
-        : 'Looking for games…'}</div>`);
+    : `<div class="empty">${anyLobbyReady() ? 'No public games right now — host one!' : 'Looking for games…'}</div>`);
+  // (only redraw when something changed, so a click on "Join" isn't lost to a redraw in the middle of it)
+  if (html !== lobbyHtml) { lobbyHtml = html; $('lobby').innerHTML = html; }
 }
 $('lobby').addEventListener('click', e => {
   const b = e.target.closest('[data-join]');
@@ -2032,13 +2198,49 @@ $('lobby').addEventListener('click', e => {
 });
 
 // Keep the lobby going while the online menu is open, and keep public rooms listed
-setInterval(() => {
-  if (uiMode !== 'online') { if (lobbyPeer) lobbyStop(); return; }
-  if (!lobbyPeer) { if (!lobbyTimer) lobbyStart(); return; }
-  if (lobbyKeeper) renderLobby(); else if (role === 'local') lobbyAsk();
-  postRoom(); renderPubNote();
-}, 3000);
+function lobbyTick() {
+  if (uiMode !== 'online') { if (lobbies.some(L => L.peer || L.timer)) lobbyStopAll(); return; }
+  const now = performance.now();
+  for (const L of lobbies) {
+    if (!L.peer && !L.timer) lobbyStart(L);
+    else if (L.keeper) {
+      keptList(L);
+      // anyone who has gone quiet (closed laptop, lost wifi...) is dropped, along with their room
+      for (const c of [...L.linkSet]) if (now - c.seen > 12000) { try { c.close(); } catch (e) {} L.linkSet.delete(c); }
+    } else if (L.conn && L.conn.open) {
+      if (now - L.heard > 10000) lobbyRetry(L); // the keeper has gone quiet: reconnect (or take over)
+      else lobbyAsk(L);                          // (this doubles as a "still here" signal)
+    }
+  }
+  postRoom(); renderLobby(); renderPubNote();
+}
+// Coming back to this tab (or the network coming back): check everything right away
+document.addEventListener('visibilitychange', () => { if (!document.hidden) lobbyTick(); });
+addEventListener('online', lobbyTick);
+// Browsers slow timers in tabs you aren't looking at, which can make the matchmaking server think we've left.
+// This is called from the game's worker timer (which isn't slowed) and says "still here" every few seconds.
+let lastBeat = 0;
+function heartbeat(now) {
+  if (now - lastBeat < 3000) return;
+  lastBeat = now;
+  for (const p of [peer, ...lobbies.map(L => L.peer)]) { try { if (p && p.open && p.socket) p.socket.send({ type: 'HEARTBEAT' }); } catch (e) {} }
+  // In a game: a friend who has gone silent is gone (a closed laptop or lost wifi isn't noticed by the browser for a long time)
+  if (role === 'guest' && connected()) {
+    send({ t: 'ping', ts: now, rtt: pingMs });
+    if (now - lastHostMsg > LIVE_MS) { leaveOnline('Lost connection to the host.'); return; }
+  } else if (role === 'host') {
+    for (const [slot, c] of Object.entries(conns)) if (c.open && now - (lastHeard[slot] || now) > LIVE_MS) { try { c.close(); } catch (e) {} }
+  }
+  lobbyTick();
+}
 
+// Quick play: join an open public game, or start one
+function quickPlay() {
+  const room = allRooms().find(r => r.n < MAX_PLAYERS);
+  if (room) joinGame(room.code); else hostGame(true);
+}
+
+$('quickBtn').addEventListener('click', quickPlay);
 $('hostBtn').addEventListener('click', () => hostGame(false));
 $('hostPubBtn').addEventListener('click', () => hostGame(true));
 // "2 players on this keyboard"
@@ -2053,13 +2255,13 @@ $('joinBtn').addEventListener('click', () => joinGame($('codeIn').value));
 $('leaveBtn').addEventListener('click', () => leaveOnline(''));
 
 // The guest measures the connection delay every couple of seconds and shares it with the host
-setInterval(() => { if (role === 'guest' && connected()) send({ t:'ping', ts: performance.now(), rtt: pingMs }); }, 2000);
+// (now done in heartbeat(), which runs on the worker timer so a hidden tab can't slow it down)
 
 // Host → guest: full game snapshot every tick, plus the effects that happened
 function sendState() {
   if (role !== 'host' || !connected()) { outFx = []; return; }
   const m = {
-    t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT,
+    t:'state', n: tickNo, state, cfg, score, apples, rocks, portals, tk: TICK, stats, skins, pausedT, pub: publicRoom,
     ch: challenge, goal, el: elapsed, g: G, statues, bw: bossWave, bn: bossNext,
     boss: boss && { kind: boss.kind, body: boss.body, dir: boss.dir, hp: boss.hp, max: boss.max, stun: boss.stun,
       under: boss.under || 0, pop: boss.under > 0 ? boss.pop : null },
@@ -2089,17 +2291,19 @@ function onHostData(slot, m) {
       const at = Number.isSafeInteger(m.at) ? m.at : tickNo + 1;
       if (state === 'playing' && at <= tickNo && lateTurn(target, m.dir, at)) return;
       const s = snakeOf(target);
-      if (state === 'ready' || state === 'over') steer(target, m.dir);
+      if (state === 'ready' || state === 'over') { if (!publicRoom) steer(target, m.dir); } // (a key press in the menu starts the game)
       else if ((state === 'playing' || state === 'countdown') && s && s.alive)
         queueAt(s, m.dir, Math.min(at, tickNo + 3), tickNo);
       break;
     }
-    case 'space': spaceAction(); break;
+    // In a public room only the host starts, pauses and ends games (so a stranger can't spoil it for everyone)
+    case 'space': if (publicRoom) return; spaceAction(); break;
     case 'start':
+      if (publicRoom) return;
       if (state === 'paused') resume();
       else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
       break;
-    case 'quit': endGame(); break;
+    case 'quit': if (publicRoom) return; endGame(); break;
     case 'skin': {
       const target = m.who === 1 ? seat2[slot] : slot;
       if (target === undefined) return;
@@ -2178,6 +2382,7 @@ function cleanState(m) {
       pausedT: num(m.pausedT, 0, 1),
       countLeft: num(m.countLeft, 0, 5000),
       ack: int(m.ack, 0, Number.MAX_SAFE_INTEGER),
+      pub: m.pub === true,
       you: isIdx(m.you, MAX_PLAYERS) && m.you > 0 ? m.you : 1,
       you2: isIdx(m.you2, MAX_PLAYERS) && m.you2 > 0 && m.you2 !== m.you ? m.you2 : -1,
       apples: arr(m.apples, 64).map(a => { // (up to 20 apples, 20 poison ones, plus gold/key/shield)
@@ -2254,6 +2459,7 @@ function pumpInbox() {
 
 function applyState(m) {
   const prev = state, now = performance.now();
+  if (m.pub !== roomPublic) { roomPublic = m.pub; renderMenu(); }
   challenge = m.ch; goal = m.goal; elapsed = m.el; statues = m.statues;
   boss = m.boss; bossWave = m.bw; bossNext = m.bn;
   if (m.g !== G) { G = m.g; $('hint').textContent = hintText(); }
@@ -2969,6 +3175,7 @@ function drawCountdown(now) {
 // Simulation runs on a timer (not just animation frames) so the host keeps going smoothly
 function update() {
   const now = performance.now();
+  heartbeat(now);
   if (state === 'countdown' && now >= countEnd) {
     state = 'playing'; setClock(now); beep(990, .15);
     if (role === 'guest') return;
