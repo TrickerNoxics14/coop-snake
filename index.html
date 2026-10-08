@@ -295,8 +295,9 @@ const BOSSES = {
   bomber:  { name:'Bomber', icon:'💣', color:'#3a3a3a', hp:4, len:6, every:2, ai:'wander', bomb:true, desc:'leaves bombs behind — don\'t step on them' },
   wizard:  { name:'Wizard', icon:'🧙', color:'#6d28d9', hp:4, len:5, every:2, ai:'chase', teleport:true, desc:'vanishes and pops up somewhere else' },
   kraken:  { name:'Kraken', icon:'🐙', color:'#b5179e', hp:5, len:9, every:2, ai:'wander', desc:'long and impossible to predict' },
+  dragon:  { name:'Dragon', icon:'🐉', color:'#c2410c', hp:5, len:8, every:2, ai:'chase', breath:true, desc:'breathes fire down its path' },
 };
-const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king', 'shark', 'bomber', 'wizard', 'kraken'];
+const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king', 'shark', 'bomber', 'wizard', 'kraken', 'dragon'];
 const SLIME_TICKS = 45, MOLE_DIG_EVERY = 18, MOLE_UNDER = 6;
 const SQUEEZE_START_MS = 15000, SQUEEZE_PAUSE_MS = 7000, FLEE_RANGE = 3, HUNGER_MS = 10000;
 const BOSS_HIT_POINTS = 3, BOSS_WIN_POINTS = 10, BOSS_STUN = 6, BOSS_GAP_MS = 3000;
@@ -773,6 +774,8 @@ function settleStatues() {
 
 // ---------- Boss mode ----------
 let boss = null, bossWave = 0, bossNext = 0; // bossNext = moves until the next boss shows up
+let bossIntroAt = -1e9; // when the current boss appeared (for its name banner)
+const enraged = () => !!boss && boss.hp > 0 && boss.hp * 2 <= boss.max; // at half health (or less) a boss gets angry
 // Which square of the boss is at p (-1 = none). A boss that's dug underground can't be touched.
 const bossAt = p => boss && !(boss.under > 0) ? boss.body.findIndex(c => eq(c, p)) : -1;
 const bossCells = () => boss && !(boss.under > 0) ? boss.body : [];
@@ -806,8 +809,10 @@ function spawnBoss() {
   const kind = BOSS_ORDER[bossWave % BOSS_ORDER.length], B = BOSSES[kind];
   const spot = bossSpot(Math.max(3, Math.min(B.len, Math.min(COLS, ROWS) - 2)));
   if (!spot) { bossNext = 3; return; } // no room right now: try again in a moment
-  const hp = B.hp + Math.floor(bossWave / BOSS_ORDER.length); // each round through all the bosses is tougher
+  // each round through all the bosses is tougher, and a bigger team gets one extra heart
+  const hp = B.hp + Math.floor(bossWave / BOSS_ORDER.length) + (snakes.filter(s => s.alive).length >= 3 ? 1 : 0);
   boss = { kind, body: spot.body, dir: spot.dir, hp, max: hp, stun: 4, wait: 0, grow: 0, moves: 0, under: 0, dig: MOLE_DIG_EVERY };
+  bossIntroAt = performance.now();
   for (const c of spot.body) burst(c, B.color, 4, 2.5);
   popup(spot.body[0], B.name.split(' ')[0] + '!', '#ffd0d0');
   doShake(); beep(110, .3, 0, 'sawtooth'); beep(82, .4, .2, 'sawtooth');
@@ -855,20 +860,48 @@ function knockOut(s) {
 function hurtBoss(by, label, cut) {
   const B = BOSSES[boss.kind], tail = cut !== undefined ? boss.body[cut] : boss.body[boss.body.length - 1];
   boss.hp--; boss.stun = BOSS_STUN;
+  if (enraged() && !boss.raged) { boss.raged = true; popup(boss.body[0], '🔥 ENRAGED!', '#ff6a3d'); beep(120, .3, 0, 'sawtooth'); }
   // a bite takes the tail off from where it was bitten (it grows back a little)
   if (cut !== undefined) { boss.body.length = Math.max(1, cut); boss.grow += 2; }
   burst(tail, '#ffe066', 16, 3.5); popup(tail, label, '#ffe066');
   doShake(); beep(196, .12, 0, 'square'); beep(147, .18, .1, 'square');
   if (by) { by.apples += BOSS_HIT_POINTS; score += BOSS_HIT_POINTS; }
   if (boss.hp > 0) return;
-  // Defeated!
+  // Defeated! The later bosses are worth more, and a power-up drops where it fell
+  const head = boss.body[0], win = BOSS_WIN_POINTS + Math.min(bossWave, 12) * 2;
   for (const c of boss.body) burst(c, B.color, 10, 4.5);
-  popup(boss.body[0], 'Defeated!', '#ffe680');
-  score += BOSS_WIN_POINTS; if (by) by.apples += BOSS_WIN_POINTS;
+  popup(head, `Defeated! +${win}`, '#ffe680');
+  score += win; if (by) by.apples += win;
   stats.bosses++; bossWave++;
-  rocks = rocks.filter(r => !('slime' in r)); // its slime goes with it
+  rocks = rocks.filter(r => !('slime' in r || 'fire' in r)); // its slime and fire go with it
   boss = null; bossNext = Math.round(BOSS_GAP_MS / TICK);
+  dropPowerNear(head);
   beep(523, .1); beep(659, .1, .1); beep(784, .1, .2); beep(1047, .25, .3);
+}
+
+// A power-up appears on the nearest free square to `c` (the reward for beating a boss)
+function dropPowerNear(c) {
+  for (let r = 0; r <= 4; r++) for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) continue;
+    const p = { x: c.x + dx, y: c.y + dy };
+    if (!inBounds(p) || occupied().some(o => eq(o, p))) continue;
+    const a = { ...p, power: Object.keys(POWER_KINDS)[Math.random() * 3 | 0] };
+    apples.push(a); burst(a, '#ffd54a', 16, 3); beep(880, .08); beep(1320, .1, .08);
+    return;
+  }
+}
+
+// The Dragon's breath: a column of fire straight ahead of its head (it hurts anything that touches it, then fizzles out)
+function breathFire() {
+  let p = boss.body[0];
+  for (let i = 0; i < 4; i++) {
+    p = step(p, boss.dir);
+    if (!inBounds(p)) break;
+    if (boss.body.some(c => eq(c, p)) || rocks.some(r => eq(r, p) && !('slime' in r))) continue;
+    rocks.push({ x: p.x, y: p.y, slime: 6, fire: true });
+    burst(p, '#ff8a3d', 6, 2);
+  }
+  beep(180, .25, 0, 'sawtooth');
 }
 
 // The Mole: dig in (it's untouchable underground), then pop up near a snake
@@ -898,7 +931,7 @@ function bossTick() {
   if (!boss) { if (bossNext > 0 && --bossNext === 0) spawnBoss(); return; }
   if (boss.stun > 0) { boss.stun--; return; }
   const B = BOSSES[boss.kind];
-  if (++boss.wait < B.every) return;
+  if (++boss.wait < (enraged() ? Math.max(1, B.every - 1) : B.every)) return; // angry bosses move faster
   boss.wait = 0;
   if (B.burrow && moleTick()) return;
   // Wizard: every 12 moves it vanishes and reappears somewhere else
@@ -906,6 +939,7 @@ function bossTick() {
     const spot = bossSpot(boss.body.length);
     if (spot) { for (const c of boss.body) burst(c, B.color, 3, 2); boss.body = spot.body; boss.dir = spot.dir; popup(spot.body[0], 'Poof!', '#d8b4fe'); return; }
   }
+  if (B.breath && boss.moves % 6 === 5) breathFire();
   const h = boss.body[0];
   let opts = Object.keys(DIRS).filter(d => d !== OPP[boss.dir] && bossCanEnter(step(h, d)));
   if (!opts.length) { // boxed in! It gets hurt and turns around
@@ -2504,7 +2538,7 @@ function cleanState(m) {
     const statueCell = p => {
       const o = cellOf(p);
       if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue;
-      else if (p && Number.isFinite(p.slime)) { o.slime = int(p.slime, 1, 200); if (p.bomb === true) o.bomb = true; } // a boss's slime puddle or bomb
+      else if (p && Number.isFinite(p.slime)) { o.slime = int(p.slime, 1, 200); if (p.bomb === true) o.bomb = true; if (p.fire === true) o.fire = true; } // a boss's slime, bomb or fire
       else if (p && p.wall === true) o.wall = true; // a Squeeze wall
       return o;
     };
@@ -2603,6 +2637,7 @@ function applyState(m) {
   const prev = state, now = performance.now();
   if (m.pub !== roomPublic) { roomPublic = m.pub; renderMenu(); }
   challenge = m.ch; goal = m.goal; elapsed = m.el; statues = m.statues;
+  if (m.boss && (!boss || boss.kind !== m.boss.kind)) bossIntroAt = now; // a new boss: show its name banner
   boss = m.boss; bossWave = m.bw; bossNext = m.bn;
   if (m.g !== G) { G = m.g; $('hint').textContent = hintText(); }
   if (JSON.stringify(m.cfg) !== JSON.stringify(cfg)) { cfg = m.cfg; applyConfig(); }
@@ -2764,6 +2799,16 @@ function drawStatue(r, now, ghost) {
 
 // A boss's slime: a bubbling green puddle that fades away as it dries up
 function drawSlime(r, now) {
+  if (r.fire) { // the Dragon's fire: a flickering flame that fades as it burns out
+    const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL, f = Math.min(1, r.slime / 3), flick = .85 + .15 * Math.sin(now / 60 + r.x * 3);
+    ctx.globalAlpha = .9 * f;
+    ctx.fillStyle = '#ff7a1a';
+    ctx.beginPath(); ctx.ellipse(cx, cy + CELL * .05, CELL * .42 * flick, CELL * .46 * flick, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#ffe066';
+    ctx.beginPath(); ctx.ellipse(cx, cy + CELL * .15, CELL * .22, CELL * .28, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    return;
+  }
   if (r.bomb) { // a Bomber's bomb: a dark ball with a fizzing fuse (it blinks faster as it gets close to going off)
     const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL, blink = r.slime < 8 && Math.floor(now / 120) % 2;
     ctx.fillStyle = blink ? '#ff5a3c' : '#2b2b2b';
@@ -3207,7 +3252,8 @@ function drawBoss(now) {
     return px(f && touching(f, c) ? toward(f, c, k) : c);
   });
   const stunned = boss.stun > 0, flash = stunned && Math.floor(now / 90) % 2;
-  const color = flash ? '#ffffff' : B.color, dark = mix(B.color, '#000000', .35);
+  const base = enraged() ? mix(B.color, '#ff2200', .4) : B.color; // an angry boss turns redder
+  const color = flash ? '#ffffff' : base, dark = mix(base, '#000000', .35);
   if (B.phase) ctx.globalAlpha = .55 + .15 * Math.sin(now / 300); // the Phantom is see-through
   // body: dark outline, then the color, in pieces (so it can wrap across edges)
   const segs = [];
@@ -3254,6 +3300,18 @@ function drawBoss(now) {
     ctx.globalAlpha = 1; ctx.font = `${CELL * .45}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
     ctx.fillText('👑', h.x - d.x * CELL * .1, h.y - CELL * .5);
   }
+  // a big name banner when a boss arrives (it fades in, holds, then fades out)
+  const since = now - bossIntroAt, W = COLS * CELL;
+  if (since < 2400) {
+    ctx.globalAlpha = Math.max(0, Math.min(1, since < 300 ? since / 300 : (2400 - since) / 400));
+    ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(0, ROWS * CELL * .4, W, CELL * 1.7);
+    ctx.fillStyle = B.color === '#3a3a3a' ? '#ffe066' : '#fff';
+    ctx.font = `bold ${CELL * .62}px Roboto, Arial, "Segoe UI Emoji"`;
+    ctx.fillText(`⚠ ${B.icon} ${B.name} ⚠`, W / 2, ROWS * CELL * .4 + CELL * .6);
+    ctx.font = `${CELL * .34}px Roboto, Arial`; ctx.fillStyle = '#ffe066';
+    ctx.fillText(B.desc, W / 2, ROWS * CELL * .4 + CELL * 1.25);
+    ctx.globalAlpha = 1;
+  }
   // health hearts above the head (the name and what it does are shown under the board)
   ctx.globalAlpha = 1;
   ctx.font = `${CELL * .32}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`;
@@ -3264,7 +3322,7 @@ function drawBoss(now) {
 }
 // Boss mode's line under the board: who you're fighting, or who's coming next
 function bossHint() {
-  if (boss) { const B = BOSSES[boss.kind]; return `${B.icon} ${B.name} — ${B.desc} · boss ${bossWave + 1} · bite its glowing tail!`; }
+  if (boss) { const B = BOSSES[boss.kind]; return `${B.icon} ${B.name} — ${B.desc} · boss ${bossWave + 1}${enraged() ? ' · 🔥 ENRAGED!' : ''} · bite its glowing tail!`; }
   const B = BOSSES[BOSS_ORDER[bossWave % BOSS_ORDER.length]];
   return bossNext > 0 && state !== 'ready' ? `Next boss: ${B.icon} ${B.name} in ${Math.ceil(bossNext * TICK / 1000)}s…` : 'Bite the boss on its glowing tail — avoid the rest of it!';
 }
