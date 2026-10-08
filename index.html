@@ -331,6 +331,8 @@ const PALETTE = [
   { name:'blue', hex:'#4e7cf6' }, { name:'purple', hex:'#a855f7' }, { name:'orange', hex:'#f97316' },
   { name:'pink', hex:'#ec4899' }, { name:'teal', hex:'#14b8a6' }, { name:'yellow', hex:'#eab308' },
   { name:'slate', hex:'#475569' }, { name:'brown', hex:'#9a5b2e' },
+  // unlocked by playing (see unlockAt below)
+  { name:'coral', hex:'#fb7185' }, { name:'lime', hex:'#84cc16' }, { name:'sky', hex:'#0ea5e9' }, { name:'crimson', hex:'#b91c1c' },
 ];
 const PATTERNS = { classic:'Classic', stripes:'Stripes', spots:'Spots', rainbow:'Rainbow' };
 const validSkin = (k, dflt) => ({
@@ -621,7 +623,36 @@ function occupied() {
   return cells.concat(apples, rocks, portals, statues, bossCells());
 }
 
-const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield).length;
+const normalApples = () => apples.filter(a => !a.gold && !a.poison && !a.key && !a.shield && !a.power).length;
+
+// Power-ups: a pickup every POWER_EVERY apples, that gives the snake that eats it a short special ability
+const POWER_KINDS = {
+  magnet: { label:'🧲 Magnet!', ms:6000, color:'#ff6b6b' },
+  double: { label:'2× points!', ms:8000, color:'#ffd54a' },
+  ghost:  { label:'👻 Ghost!', ms:5000, color:'#c7d2fe' },
+};
+const POWER_EVERY = 10;
+// Magnet power-up: pull each nearby apple one square closer to this snake's head
+function pullTo(s) {
+  const h = s.body[0];
+  for (const a of apples) {
+    if (a.poison || a.locked || a.power) continue;
+    const d = Math.abs(h.x - a.x) + Math.abs(h.y - a.y);
+    if (d <= 1 || d > 4) continue;
+    const dx = Math.sign(h.x - a.x), dy = Math.sign(h.y - a.y);
+    for (const [mx, my] of Math.abs(h.x - a.x) >= Math.abs(h.y - a.y) ? [[dx, 0], [0, dy]] : [[0, dy], [dx, 0]]) {
+      const p = { x: a.x + mx, y: a.y + my };
+      if ((mx || my) && inBounds(p) && !occupied().some(c => eq(c, p))) { a.x = p.x; a.y = p.y; break; }
+    }
+  }
+}
+
+// Lifetime apples (saved on this computer) unlock extra snake colors and patterns
+const LIFE_KEY = 'coopSnakeLife';
+let lifeApples = (() => { try { return Math.max(0, +localStorage.getItem(LIFE_KEY) || 0); } catch (e) { return 0; } })();
+function addLife(n) { lifeApples += n; try { localStorage.setItem(LIFE_KEY, lifeApples); } catch (e) {} }
+const unlockAt = { colors: [0, 0, 0, 0, 0, 0, 0, 0, 30, 60, 100, 150], patterns: { classic:0, stripes:0, spots:40, rainbow:120 } };
+const isUnlocked = (kind, key) => lifeApples >= (kind === 'c' ? unlockAt.colors[key] : unlockAt.patterns[key]);
 
 // Runaway mode: every other move, apples near a head step one square away from it (cornered ones can't)
 function fleeApples() {
@@ -807,7 +838,7 @@ function bossTarget(ai) {
 }
 
 function knockOut(s) {
-  s.alive = false; s.queue = []; s.log = []; s.respawn = RESPAWN_TICKS;
+  s.alive = false; s.queue = []; s.log = []; s.respawn = RESPAWN_TICKS; s.power = null;
   burst(s.body[0], skinHex(s.id), 22, 4);
   doShake(); beep(160, .25, 0, 'sawtooth');
 }
@@ -942,6 +973,7 @@ function spawnApple(kind) {
   if (kind === 'poison') a.poison = true;
   if (kind === 'key') a.key = true;
   else if (kind === 'shield') a.shield = true;
+  else if (kind === 'power') a.power = Object.keys(POWER_KINDS)[Math.random() * 3 | 0];
   else if (!kind && G === 'key') a.locked = true;
   apples.push(a);
   if (gold) { burst(a, '#ffd54a', 14, 2.5); beep(1046, .08); beep(1568, .12, .07); }
@@ -980,7 +1012,7 @@ function respawnSnake(s) {
     // (and not right next to a boss's head, so you don't get bitten the moment you're back)
     const awayFromBoss = !boss || tries > 350 || wrapDist(body[0], boss.body[0]) > 5;
     if (body.every(isFree) && ahead.every(isFree) && awayFromBoss) {
-      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0, fed:elapsed, hl:HUNGER_MS });
+      Object.assign(s, { body, dir, queue:[], alive:true, respawn:0, pending:0, eatFx:1, blocked:false, log:[], fresh:true, moves:0, safe:0, fed:elapsed, hl:HUNGER_MS, power:null });
       burst(body[0], skinHex(s.id), 16, 3);
       beep(520, .08); beep(780, .1, .08);
       return true;
@@ -996,6 +1028,9 @@ function tick() {
   elapsed += TICK;
   const peaceful = G === 'peaceful';
   snakes.forEach(s => { s.fresh = false; s.ateNow = false; s.flipped = false; if (s.safe > 0) s.safe--; });
+  for (const s of snakes) if (s.power && elapsed >= s.pwEnd) s.power = null; // power-ups run out
+  // Magnet: the snake pulls nearby apples toward its head every move
+  for (const s of snakes) if (s.alive && s.power === 'magnet') pullTo(s);
   snakes.forEach(s => { if (!s.alive && s.respawn > 0 && --s.respawn === 0 && !respawnSnake(s)) s.respawn = 1; });
 
   apples.forEach(a => { if (a.gold) a.ttl--; });
@@ -1046,8 +1081,8 @@ function tick() {
       || (bossAt(h) >= 0 && !s.bitBoss)
       || rocks.some(r => eq(r, h))
       || (s.appleIdx >= 0 && (apples[s.appleIdx].poison || apples[s.appleIdx].locked))
-      || s.body.some((c, i) => i > 0 && eq(c, h))
-      || live.some(o => o !== s && o.body.some(c => eq(c, h)));
+      || (s.power !== 'ghost' && (s.body.some((c, i) => i > 0 && eq(c, h))
+        || live.some(o => o !== s && o.body.some(c => eq(c, h)))));  // (a Ghost power-up passes through bodies)
   });
   // Shield mode: a shield takes the hit, then the snake is see-through for a moment so it can slip free
   for (const s of crashed) {
@@ -1071,7 +1106,7 @@ function tick() {
   }
   stats.safeMs = dying.length ? 0 : stats.safeMs + TICK;
   for (const s of dying) {
-    s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = []; s.log = [];
+    s.alive = false; s.body = s.oldBody; s.pending = s.oldPending; s.queue = []; s.log = []; s.power = null;
     s.respawn = RESPAWN_TICKS;
     burst(s.body[0], skinHex(s.id), 22, 4);
     doShake();
@@ -1139,8 +1174,16 @@ function eatApple(s, a) {
   }
   if (G === 'statue') makeStatue(s);
   if (G === 'reverse') flipSnake(s);
-  const pts = a.gold ? GOLD_POINTS : 1;
+  if (a.power) { // Power-up: a few seconds of something special, just for this snake
+    s.power = a.power; s.pwEnd = elapsed + POWER_KINDS[a.power].ms; s.eatFx = 1;
+    burst(a, POWER_KINDS[a.power].color, 18, 3.5);
+    popup(a, POWER_KINDS[a.power].label, POWER_KINDS[a.power].color);
+    beep(700, .07, 0, 'sine'); beep(1050, .07, .07, 'sine'); beep(1400, .1, .14, 'sine');
+    return;
+  }
+  const pts = (a.gold ? GOLD_POINTS : 1) * (s.power === 'double' ? 2 : 1);
   s.apples += pts; score += pts; s.pending += a.gold ? GOLD_GROW : 1; s.eatFx = 1;
+  addLife(1);
   stats.eaten++; if (a.gold) stats.golds++;
   burst(a, a.gold ? '#ffd54a' : '#e7471d', a.gold ? 24 : 12, a.gold ? 4 : 3);
   popup(a, '+' + pts, a.gold ? '#ffe680' : '#fff');
@@ -1169,6 +1212,7 @@ function refillAfterEating(count) {
   if (G === 'key') ensureKey();
   // Shield mode: a new shield shows up every few apples (only one on the board at a time)
   if (G === 'shield' && stats.eaten % SHIELD_EVERY === 0 && !apples.some(a => a.shield)) spawnApple('shield');
+  if (stats.eaten > 0 && stats.eaten % POWER_EVERY === 0 && !apples.some(a => a.power)) spawnApple('power');
   if (G === 'speed') {
     // 4% faster per point, down to a limit
     TICK = Math.min(TICK, Math.max(55, Math.round(SPEEDS[cfg.speed] * Math.pow(.96, score))));
@@ -1183,6 +1227,7 @@ const stepT = () => state === 'playing' ? Math.max(0, Math.min(1, (performance.n
 function aheadBlocked(s, dir) {
   const b = s.body, next = dest(b[0], dir);
   if (s.safe > 0) return !inBounds(next); // see-through after a shield: only walls stop it
+  if (s.power === 'ghost') return !inBounds(next) || rocks.some(r => eq(r, next)); // Ghost: only walls and rocks stop it
   if (boss) { const i = bossAt(next); if (i >= 0 && i < boss.body.length - 2) return true; } // (its tail is fair game)
   if (!inBounds(next) || rocks.some(r => eq(r, next)) || apples.some(a => (a.poison || a.locked) && eq(a, next))) return true;
   if (G === 'peaceful') return false;
@@ -1640,13 +1685,16 @@ function renderSkinPanel() {
   if (panel.hidden) return;
   const slots = uiMode === 'solo' ? [[0, 'You']] : uiMode === 'local' ? [[0, 'P1'], [1, 'P2']]
     : second() >= 0 ? [[me(), 'You 1'], [second(), 'You 2']] : [[me(), 'You']];
-  panel.innerHTML = slots.map(([slot, label]) => {
+  const nextColor = unlockAt.colors.findIndex(n => n > lifeApples);
+  const note = `<div class="small" style="text-align:center">🎉 ${lifeApples} apples eaten so far${nextColor >= 0 ? ` · next color unlocks at ${unlockAt.colors[nextColor]}` : ' · every color unlocked!'}</div>`;
+  panel.innerHTML = note + slots.map(([slot, label]) => {
     const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1; // local is always P1/P2
     return `<div class="skin-row"><b>${label}</b>
-      <div class="swatches">${PALETTE.map((c, i) => `<button class="swatch${k.c === i ? ' on' : ''}" data-slot="${slot}" data-c="${i}"
-        style="background:${c.hex}" title="${c.name}" aria-label="${c.name}"${taken === i ? ' disabled' : ''}></button>`).join('')}</div>
-      <div class="seg">${Object.entries(PATTERNS).map(([p, name]) =>
-        `<button data-slot="${slot}" data-pat="${p}" class="${k.p === p ? 'on' : ''}">${name}</button>`).join('')}</div></div>`;
+      <div class="swatches">${PALETTE.map((c, i) => { const ok = isUnlocked('c', i);
+        return `<button class="swatch${k.c === i ? ' on' : ''}" data-slot="${slot}" data-c="${i}"
+        style="background:${c.hex}${ok ? '' : ';opacity:.35'}" title="${ok ? c.name : `${c.name} — unlocks at ${unlockAt.colors[i]} apples`}" aria-label="${c.name}"${taken === i || !ok ? ' disabled' : ''}>${ok ? '' : '🔒'}</button>`; }).join('')}</div>
+      <div class="seg">${Object.entries(PATTERNS).map(([p, name]) => { const ok = isUnlocked('p', p);
+        return `<button data-slot="${slot}" data-pat="${p}" class="${k.p === p ? 'on' : ''}"${ok ? '' : ' disabled'} title="${ok ? '' : `Unlocks at ${unlockAt.patterns[p]} apples`}">${name}${ok ? '' : ' 🔒'}</button>`; }).join('')}</div></div>`;
   }).join('');
 }
 
@@ -2268,7 +2316,8 @@ function sendState() {
     countLeft: countEnd - performance.now(),
     snakes: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, queue:s.queue, alive:s.alive, respawn:s.respawn,
       apples:s.apples, pending:s.pending, eatFx:s.eatFx, log:s.log, moves:s.moves, gone:!!s.gone,
-      shield:!!s.shield, safe:s.safe || 0, hl: Math.round(s.hl ?? HUNGER_MS) })),
+      shield:!!s.shield, safe:s.safe || 0, hl: Math.round(s.hl ?? HUNGER_MS),
+      power: s.power || null, pw: Math.max(0, Math.round((s.pwEnd || 0) - elapsed)) })),
     fx: outFx,
   };
   // Each friend also hears which player they are and which of their key presses have arrived
@@ -2391,6 +2440,7 @@ function cleanState(m) {
         else if (a && a.poison === true) o.poison = true;
         else if (a && a.key === true) o.key = true;
         else if (a && a.shield === true) o.shield = true;
+        else if (a && has(POWER_KINDS, a.power)) o.power = a.power;
         else if (a && a.locked === true) o.locked = true;
         return o;
       }),
@@ -2418,6 +2468,7 @@ function cleanState(m) {
           alive: s.alive === true, respawn: int(s.respawn, 0, 1000), apples: int(s.apples, 0, 1e6),
           pending: int(s.pending, 0, 100), eatFx: num(s.eatFx, 0, 1), moves: int(s.moves, 0, 1e9),
           shield: s.shield === true, safe: int(s.safe, 0, 100), hl: int(s.hl, 0, HUNGER_MS),
+          power: has(POWER_KINDS, s.power) ? s.power : null, pw: int(s.pw, 0, 60000),
           log: arr(s.log, 8).map(r => r && typeof r === 'object'
             ? { tail: r.tail ? cellOf(r.tail) : null, turn: r.turn === true, ate: r.ate === true, ok: r.ok === true }
             : { tail: null, turn: false, ate: false, ok: false }),
@@ -2468,6 +2519,7 @@ function applyState(m) {
   portals = m.portals; TICK = m.tk;
   if (JSON.stringify(m.skins) !== JSON.stringify(skins)) { skins = m.skins; applySkins(); }
   snakes = m.snakes; tickNo = m.n; lastN = m.n;
+  for (const s of snakes) s.pwEnd = elapsed + (s.pw || 0); // (power-up time left, measured on this screen)
   if (m.you !== mySlot) { mySlot = m.you; renderMenu(); }
   // Show my key presses the host hasn't confirmed yet, exactly the way the host will apply them
   if (m.you2 !== mySlot2) { mySlot2 = m.you2; renderMenu(); }
@@ -2661,6 +2713,17 @@ function drawAppleShape(a, now) {
   const cx = (a.x + .5) * CELL, cy = (a.y + .55) * CELL;
   if (a.key) return drawKey(cx, (a.y + .5) * CELL, now);
   if (a.shield) return drawShield(cx, (a.y + .5) * CELL, CELL * .34, now);
+  if (a.power) { // a glowing bubble with the power-up's symbol inside, bobbing a little
+    const py = (a.y + .5) * CELL + Math.sin(now / 260) * CELL * .05, c = POWER_KINDS[a.power].color;
+    const g = ctx.createRadialGradient(cx, py, CELL * .1, cx, py, CELL * .6);
+    g.addColorStop(0, c + 'cc'); g.addColorStop(1, c + '00');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, py, CELL * .6, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, py, CELL * .3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = c; ctx.lineWidth = CELL * .07; ctx.stroke();
+    ctx.font = `${CELL * .3}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#222'; ctx.fillText({ magnet:'🧲', double:'2×', ghost:'👻' }[a.power], cx, py + CELL * .02);
+    return;
+  }
   if (a.locked) { // the apple, inside a cage
     drawAppleShape({ x:a.x, y:a.y }, now);
     const x = a.x * CELL + CELL * .08, y = a.y * CELL + CELL * .08, w = CELL * .84;
@@ -2825,6 +2888,7 @@ function drawSnake(s, t, now) {
   const sinceSpawn = now - (L.spawnAt || -1e9), sinceDeath = now - (L.dieAt || -1e9);
   if (s.alive && sinceSpawn < 450) ctx.globalAlpha = .2 + .8 * sinceSpawn / 450; // fades in when it appears
   if (s.alive && s.safe > 0) ctx.globalAlpha = .45 + .2 * Math.sin(now / 60); // see-through after using a shield
+  if (s.alive && s.power === 'ghost') ctx.globalAlpha = .4 + .15 * Math.sin(now / 90); // Ghost power-up: see-through
   // Each body square keeps its own number (from when the head made it), so patterns stay put on the body
   const pattern = s.alive ? skins[s.id].p : 'classic';
   const hue = id => `hsl(${(id * 22 % 360 + 360) % 360}, 85%, 58%)`;
@@ -2949,6 +3013,15 @@ function drawSnake(s, t, now) {
     }
   }
   const h = px(pts[0]);
+  if (s.alive && s.power) { // a little badge above the head shows which power-up is active (and how long it lasts)
+    const left = Math.max(0, (s.pwEnd || 0) - elapsed) / POWER_KINDS[s.power].ms;
+    ctx.globalAlpha = 1; ctx.beginPath(); ctx.fillStyle = 'rgba(0,0,0,.45)';
+    ctx.arc(h.x, h.y - CELL * .8, CELL * .3, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = POWER_KINDS[s.power].color; ctx.lineWidth = CELL * .06;
+    ctx.beginPath(); ctx.arc(h.x, h.y - CELL * .8, CELL * .3, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * left); ctx.stroke();
+    ctx.font = `${CELL * .26}px "Segoe UI Emoji", "Apple Color Emoji", sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff'; ctx.fillText({ magnet:'🧲', double:'2×', ghost:'👻' }[s.power], h.x, h.y - CELL * .8);
+  }
   if (s.alive && s.shield) { // a shimmering bubble around a shielded head
     ctx.globalAlpha = .55 + .2 * Math.sin(now / 200);
     ctx.strokeStyle = '#9fe0ff'; ctx.lineWidth = CELL * .07;
