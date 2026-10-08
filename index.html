@@ -177,6 +177,7 @@ window.loadPeerLib();
     <div class="pl" id="pl3" hidden><span class="dot" style="background:var(--p3)"></span><span id="pn3">P3</span> <span id="p3">0</span></div>
     <div class="pl" id="pl4" hidden><span class="dot" style="background:var(--p4)"></span><span id="pn4">P4</span> <span id="p4">0</span></div>
     <span class="ping" id="ping" title="Connection delay to your friend" hidden></span>
+    <button class="icon" id="musicBtn" title="Music on/off (N)" aria-label="Music on/off">🎵</button>
     <button class="icon" id="muteBtn" title="Sound on/off (M)" aria-label="Sound on/off">🔊</button>
     <button class="icon" id="fsBtn" title="Fullscreen (F)" aria-label="Fullscreen">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 5V1h4M11 1h4v4M15 11v4h-4M5 15H1v-4"/></svg>
@@ -231,6 +232,7 @@ window.loadPeerLib();
         <div class="extras menu-only">
           <button class="link" id="skinBtn">🎨 Snake looks</button>
           <button class="link" id="helpBtn">❓ Controls</button>
+          <button class="link" id="dailyBtn" title="The same game for everyone today">📅 Daily game</button>
         </div>
         <div class="skins menu-only" id="skinPanel" hidden></div>
         <div class="menu-only" id="helpBox" hidden>
@@ -289,8 +291,12 @@ const BOSSES = {
   mole:    { name:'Mole', icon:'🕳', color:'#8d5a3b', hp:4, len:6, every:2, ai:'chase', burrow:true, desc:'digs underground and pops up near you' },
   titan:   { name:'Titan', icon:'🗿', color:'#3d4a5c', hp:6, len:11, every:3, ai:'chase', desc:'huge, slow and tough' },
   king:    { name:'King Cobra', icon:'👑', color:'#c9a227', hp:7, len:9, every:1, ai:'chase', desc:'the fast, final boss' },
+  shark:   { name:'Shark', icon:'🦈', color:'#5b7083', hp:4, len:8, every:1, ai:'chase', desc:'fast and hungry' },
+  bomber:  { name:'Bomber', icon:'💣', color:'#3a3a3a', hp:4, len:6, every:2, ai:'wander', bomb:true, desc:'leaves bombs behind — don\'t step on them' },
+  wizard:  { name:'Wizard', icon:'🧙', color:'#6d28d9', hp:4, len:5, every:2, ai:'chase', teleport:true, desc:'vanishes and pops up somewhere else' },
+  kraken:  { name:'Kraken', icon:'🐙', color:'#b5179e', hp:5, len:9, every:2, ai:'wander', desc:'long and impossible to predict' },
 };
-const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king'];
+const BOSS_ORDER = ['chomper', 'glutton', 'zippy', 'phantom', 'spitter', 'mole', 'titan', 'king', 'shark', 'bomber', 'wizard', 'kraken'];
 const SLIME_TICKS = 45, MOLE_DIG_EVERY = 18, MOLE_UNDER = 6;
 const SQUEEZE_START_MS = 15000, SQUEEZE_PAUSE_MS = 7000, FLEE_RANGE = 3, HUNGER_MS = 10000;
 const BOSS_HIT_POINTS = 3, BOSS_WIN_POINTS = 10, BOSS_STUN = 6, BOSS_GAP_MS = 3000;
@@ -580,7 +586,9 @@ function makeSnake(id, y) {
 }
 
 function reset() {
-  if (role !== 'guest') G = cfg.game !== 'blender' ? cfg.game : BLEND.filter(g => g !== G)[Math.random() * (BLEND.length - 1) | 0];
+  if (rep) stopReplay();
+  if (role !== 'guest') frames = [];
+  if (role !== 'guest') G =cfg.game !== 'blender' ? cfg.game : BLEND.filter(g => g !== G)[Math.random() * (BLEND.length - 1) | 0];
   applyConfig();
   // Everyone starts on the left, spread out over the rows
   const ids = playerSlots();
@@ -893,6 +901,11 @@ function bossTick() {
   if (++boss.wait < B.every) return;
   boss.wait = 0;
   if (B.burrow && moleTick()) return;
+  // Wizard: every 12 moves it vanishes and reappears somewhere else
+  if (B.teleport && boss.moves > 0 && boss.moves % 12 === 0) {
+    const spot = bossSpot(boss.body.length);
+    if (spot) { for (const c of boss.body) burst(c, B.color, 3, 2); boss.body = spot.body; boss.dir = spot.dir; popup(spot.body[0], 'Poof!', '#d8b4fe'); return; }
+  }
   const h = boss.body[0];
   let opts = Object.keys(DIRS).filter(d => d !== OPP[boss.dir] && bossCanEnter(step(h, d)));
   if (!opts.length) { // boxed in! It gets hurt and turns around
@@ -918,6 +931,8 @@ function bossTick() {
   boss.body.unshift(nh); boss.moves++;
   const tail = boss.grow > 0 ? null : boss.body.pop();
   if (boss.grow > 0) boss.grow--;
+  // the Bomber leaves a bomb on its tail every move (a bomb is a short-lived hazard, like slime)
+  if (B.bomb && tail) rocks.push({ x: tail.x, y: tail.y, slime: 30, bomb: true });
   // the Spitter leaves slime behind it every other move
   if (B.slime && tail && boss.moves % 2 === 0 && rocks.filter(r => 'slime' in r).length < 30)
     rocks.push({ x: tail.x, y: tail.y, slime: SLIME_TICKS });
@@ -1026,6 +1041,7 @@ function tick() {
   recording = true;
   tickNo++;
   elapsed += TICK;
+  recordFrame();
   const peaceful = G === 'peaceful';
   snakes.forEach(s => { s.fresh = false; s.ateNow = false; s.flipped = false; if (s.safe > 0) s.safe--; });
   for (const s of snakes) if (s.power && elapsed >= s.pwEnd) s.power = null; // power-ups run out
@@ -1370,6 +1386,7 @@ function updateHud() {
 
 // ---------- Flow ----------
 function beginGame() {
+  musicStart();
   reset();
   bestAtStart = best;
   state = 'countdown'; countEnd = performance.now() + 1800; lastCount = 0;
@@ -1472,7 +1489,67 @@ function confetti() {
   }
 }
 
-function gameOver() { state = 'over'; overAt = performance.now(); showGameOver(); sendState(); }
+// ---------- Replay: the last game is recorded a step at a time, so you can watch it back ----------
+let frames = [], rep = null;
+const FRAME_CAP = 2400; // about 5 minutes of play; older steps are dropped
+function recordFrame() {
+  if (role === 'guest' || state === 'replay') return;
+  frames.push(JSON.stringify({ s: snakes.map(s => ({ id:s.id, body:s.body, dir:s.dir, alive:s.alive, apples:s.apples, power:s.power || null,
+      pwEnd:s.pwEnd || 0, shield:!!s.shield, safe:s.safe || 0, gone:!!s.gone, moves:s.moves, hl:s.hl })),
+    a: apples, r: rocks, st: statues, p: portals, b: boss, sc: score, el: elapsed }));
+  if (frames.length > FRAME_CAP) frames.shift();
+}
+function applyFrame(f) {
+  const d = JSON.parse(f);
+  snakes = d.s.map(x => ({ ...makeSnake(x.id, 0), ...x, queue: [], log: [], fresh: false, eatFx: 0, respawn: 0, pending: 0, blocked: false }));
+  apples = d.a; rocks = d.r; statues = d.st; portals = d.p; boss = d.b; score = d.sc; elapsed = d.el;
+}
+function startReplay() {
+  if (!frames.length || rep || role === 'guest') return;
+  rep = { i: 0, timer: 0 };
+  state = 'replay'; overlay.classList.add('hidden');
+  $('hint').textContent = '▶ Replay — click the board or press Space to stop';
+  rep.timer = setInterval(() => {
+    if (rep.i >= frames.length) return stopReplay();
+    applyFrame(frames[rep.i++]);
+  }, TICK);
+}
+function stopReplay() {
+  if (!rep) return;
+  clearInterval(rep.timer); rep = null;
+  applyFrame(frames[frames.length - 1]); // back to the final board
+  state = 'over';
+  $('hint').textContent = hintText();
+  showGameOver(); addOverExtras();
+}
+canvas.addEventListener('click', () => { if (state === 'replay') stopReplay(); });
+overlay.addEventListener('click', e => { if (e.target.closest('[data-replay]')) startReplay(); });
+
+// ---------- Daily game: everyone gets the same game each day (scores are kept on this computer) ----------
+const DAILY_GAMES = ['classic', 'maze', 'portal', 'poison', 'speed', 'statue', 'light', 'magnet', 'key', 'boss', 'shield', 'squeeze', 'hunger', 'runaway', 'reverse'];
+let dailyDate = null;
+function todayKey() { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; }
+function dailyGameFor(key) { let h = 0; for (const ch of key) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return DAILY_GAMES[h % DAILY_GAMES.length]; }
+function dailyBestOf() {
+  try { const d = JSON.parse(localStorage.getItem('coopSnakeDaily') || 'null'); return d && d.date === todayKey() ? d.best : 0; } catch (e) { return 0; }
+}
+function recordDaily() {
+  if (!dailyDate) return;
+  try { localStorage.setItem('coopSnakeDaily', JSON.stringify({ date: todayKey(), best: Math.max(dailyBestOf(), score) })); } catch (e) {}
+}
+// The buttons under the game-over score
+function addOverExtras() {
+  let extra = '';
+  if (frames.length > 1 && role !== 'guest') extra += `<div class="btns" style="margin-top:6px"><button class="btn2" data-replay>▶ Watch replay</button></div>`;
+  if (dailyDate) extra += `<div class="small">📅 Today's best: <b>${dailyBestOf()}</b></div>`;
+  $('ovText').insertAdjacentHTML('beforeend', extra);
+}
+
+function gameOver() {
+  state = 'over'; overAt = performance.now();
+  recordFrame(); recordDaily();
+  showGameOver(); addOverExtras(); sendState();
+}
 function endGame() { if (state === 'playing' || state === 'paused') gameOver(); }
 
 function togglePause() {
@@ -1494,6 +1571,7 @@ addEventListener('blur', pauseIfAway);
 const canRestart = () => state !== 'over' || performance.now() - overAt > 700;
 
 function spaceAction() {
+  if (state === 'replay') return stopReplay();
   if (state === 'playing' || state === 'paused') togglePause();
   else if (state === 'ready' || (state === 'over' && canRestart())) beginGame();
 }
@@ -1580,6 +1658,7 @@ document.addEventListener('keydown', e => {
   const m = KEYMAP[e.code], em = EMOTE_KEYS[e.code];
   if (m || e.code === 'Space') e.preventDefault();
   if (e.code === 'KeyM') return toggleMute();
+  if (e.code === 'KeyN') return toggleMusic();
   if (e.code === 'KeyF') return toggleFullscreen();
   if (e.code === 'Space' || e.code === 'Enter') return pressPause();
   if (e.code === 'KeyP' || e.code === 'Escape') { if (state === 'playing' || state === 'paused') pressPause(); return; }
@@ -1601,6 +1680,7 @@ $('emoteBar').addEventListener('click', e => {
 
 document.querySelectorAll('select[data-key]').forEach(sel => sel.addEventListener('change', () => {
   sel.blur(); // so the arrow keys steer the snake again instead of changing the dropdown
+  dailyDate = null;
   if (role === 'guest') return;
   const k = sel.dataset.key;
   cfg = validCfg({ ...cfg, [k]: k === 'apples' ? +sel.value : sel.value });
@@ -1780,6 +1860,7 @@ $('modeSeg').addEventListener('click', e => {
   if (!b) return;
   b.blur();
   if (b.dataset.mode === uiMode) return;
+  dailyDate = null;
   if (role !== 'local') leaveOnline('');
   uiMode = b.dataset.mode;
   if (uiMode === 'solo' && cfg.play === 'versus') cfg = validCfg({ ...cfg, play:'coop' }); // (no one to play against)
@@ -2289,6 +2370,16 @@ function quickPlay() {
 }
 
 $('quickBtn').addEventListener('click', quickPlay);
+$('dailyBtn').addEventListener('click', () => {
+  if (role !== 'local') leaveOnline('');
+  uiMode = 'solo'; lobbyStopAll();
+  dailyDate = todayKey();
+  const g = dailyGameFor(dailyDate);
+  cfg = validCfg({ ...cfg, game: g, play: 'coop', mode: 'walls', board: 'medium', apples: 2, speed: 'normal' });
+  skins = startingSkins(); fixClash();
+  state = 'ready'; reset(); applySkins();
+  showOverlay("📅 Today's game", `<b>${GAME_NAMES[g]}</b> — ${GAMES[g]}<br>Everyone gets this same game today.<br>Today's best: <b>${dailyBestOf()}</b>`, 'Play');
+});
 $('hostBtn').addEventListener('click', () => hostGame(false));
 $('hostPubBtn').addEventListener('click', () => hostGame(true));
 // "2 players on this keyboard"
@@ -2413,7 +2504,7 @@ function cleanState(m) {
     const statueCell = p => {
       const o = cellOf(p);
       if (p && isIdx(p.statue, MAX_PLAYERS)) o.statue = p.statue;
-      else if (p && Number.isFinite(p.slime)) o.slime = int(p.slime, 1, 200); // a boss's slime puddle
+      else if (p && Number.isFinite(p.slime)) { o.slime = int(p.slime, 1, 200); if (p.bomb === true) o.bomb = true; } // a boss's slime puddle or bomb
       else if (p && p.wall === true) o.wall = true; // a Squeeze wall
       return o;
     };
@@ -2587,6 +2678,45 @@ function crunch() {
   } catch (e) {}
 }
 
+// ---------- Music: a short looping chiptune that speeds up as your score grows ----------
+let musicOn = true;
+try { musicOn = localStorage.getItem('coopSnakeMusic') !== '0'; } catch (e) {}
+const TUNE = [523,0,659,0,784,0,659,0, 587,0,698,0,880,0,698,0, 523,0,659,0,988,0,784,0, 659,0,784,0,523,0,0,0];
+const BASS = [131,131,165,165,147,147,196,196];
+let mus = null;
+function tone(f, t, dur, type, vol) {
+  const o = audio.createOscillator(), g = audio.createGain();
+  o.type = type; o.frequency.value = f;
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  o.connect(g).connect(audio.destination); o.start(t); o.stop(t + dur + .02);
+}
+function musicTick() {
+  if (!audio || !mus || !musicOn || muted || state === 'paused') return;
+  if (state !== 'playing' && state !== 'countdown') return; // the music rests between games
+  const step = 60 / Math.min(170, 104 + score * 1.2) / 2;
+  if (mus.next < audio.currentTime) mus.next = audio.currentTime + .05; // (coming back after a pause)
+  while (mus.next < audio.currentTime + .2) {
+    const i = mus.step, f = TUNE[i % TUNE.length];
+    if (f) tone(f, mus.next, step * .9, 'triangle', .035);
+    if (i % 4 === 0) tone(BASS[(i / 4 | 0) % BASS.length], mus.next, step * 3.5, 'sine', .05);
+    mus.next += step; mus.step++;
+  }
+}
+function musicStart() {
+  if (mus || !musicOn) return;
+  try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  mus = { next: audio.currentTime + .05, step: 0 };
+  setInterval(musicTick, 50);
+}
+function toggleMusic() {
+  musicOn = !musicOn;
+  try { localStorage.setItem('coopSnakeMusic', musicOn ? '1' : '0'); } catch (e) {}
+  $('musicBtn').style.opacity = musicOn ? 1 : .4;
+  if (musicOn) musicStart();
+}
+$('musicBtn').addEventListener('click', e => { e.currentTarget.blur(); toggleMusic(); });
+$('musicBtn').style.opacity = musicOn ? 1 : .4;
+
 // ---------- Effects ----------
 function burst(cell, color, n, speed) {
   if (recording) outFx.push(['burst', [{ x:cell.x, y:cell.y }, color, n, speed]]);
@@ -2634,6 +2764,14 @@ function drawStatue(r, now, ghost) {
 
 // A boss's slime: a bubbling green puddle that fades away as it dries up
 function drawSlime(r, now) {
+  if (r.bomb) { // a Bomber's bomb: a dark ball with a fizzing fuse (it blinks faster as it gets close to going off)
+    const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL, blink = r.slime < 8 && Math.floor(now / 120) % 2;
+    ctx.fillStyle = blink ? '#ff5a3c' : '#2b2b2b';
+    ctx.beginPath(); ctx.arc(cx, cy + CELL * .05, CELL * .32, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#888'; ctx.lineWidth = CELL * .05;
+    ctx.beginPath(); ctx.moveTo(cx + CELL * .2, cy - CELL * .22); ctx.quadraticCurveTo(cx + CELL * .4, cy - CELL * .45, cx + CELL * .3, cy - CELL * .4); ctx.stroke();
+    return;
+  }
   const cx = (r.x + .5) * CELL, cy = (r.y + .5) * CELL, a = Math.min(1, r.slime / 12);
   ctx.globalAlpha = .85 * a;
   ctx.fillStyle = '#7cf06a'; ctx.strokeStyle = '#1d6b28'; ctx.lineWidth = CELL * .07; // (outlined so it stands out on the grass)
