@@ -1557,7 +1557,37 @@ function stopReplay() {
   showGameOver(); addOverExtras();
 }
 canvas.addEventListener('click', () => { if (state === 'replay') stopReplay(); });
-overlay.addEventListener('click', e => { if (e.target.closest('[data-replay]')) startReplay(); });
+overlay.addEventListener('click', e => {
+  if (e.target.closest('[data-replay]')) startReplay();
+  const cp = e.target.closest('[data-copy]');
+  if (cp) copyResult(cp);
+  if (e.target.closest('[data-random]')) randomLook();
+});
+// Copy text to the clipboard. Falls back to an older method when the newer one isn't allowed (e.g. on a plain file).
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) { await navigator.clipboard.writeText(text); return true; }
+  } catch (e) {}
+  try {
+    const t = document.createElement('textarea');
+    t.value = text; t.setAttribute('readonly', '');
+    t.style.position = 'fixed'; t.style.opacity = '0'; t.style.left = '-9999px';
+    document.body.appendChild(t); t.focus(); t.select();
+    const ok = document.execCommand && document.execCommand('copy');
+    t.remove();
+    return !!ok;
+  } catch (e) { return false; }
+}
+// A short result you can paste to friends
+async function copyResult(btn) {
+  const mode = uiMode === 'solo' ? 'Solo' : uiMode === 'online' ? 'Online' : 'Local';
+  const secs = Math.round(elapsed / 1000);
+  const text = `🐍 Snake — ${GAME_NAMES[G]} (${mode}${cfg.play === 'coop' ? '' : ', ' + PLAY_NAMES[cfg.play]}): ${score} 🍎 in ${clock(secs)}` +
+    (stats.bosses ? `, ${stats.bosses} boss${stats.bosses === 1 ? '' : 'es'} beaten` : '');
+  const ok = await copyText(text);
+  btn.textContent = ok ? 'Copied! ✓' : 'Copy failed';
+  setTimeout(() => { btn.textContent = '📋 Copy result'; }, 2000);
+}
 
 // ---------- Daily game: everyone gets the same game each day (scores are kept on this computer) ----------
 const DAILY_GAMES = ['classic', 'maze', 'portal', 'poison', 'speed', 'statue', 'light', 'magnet', 'key', 'boss', 'shield', 'squeeze', 'hunger', 'runaway', 'reverse'];
@@ -1576,6 +1606,7 @@ function addOverExtras() {
   let extra = '';
   if (frames.length > 1 && role !== 'guest') extra += `<div class="btns" style="margin-top:6px"><button class="btn2" data-replay>▶ Watch replay</button></div>`;
   if (dailyDate) extra += `<div class="small">📅 Today's best: <b>${dailyBestOf()}</b></div>`;
+  extra += `<div class="btns" style="margin-top:6px"><button class="btn2" data-copy>📋 Copy result</button></div>`;
   $('ovText').insertAdjacentHTML('beforeend', extra);
 }
 
@@ -1603,6 +1634,21 @@ addEventListener('blur', pauseIfAway);
 
 // Stops a new game starting by accident while you're still mashing keys after a crash
 const canRestart = () => state !== 'over' || performance.now() - overAt > 700;
+
+// R restarts the round. Press it twice within 2 seconds, so a stray press doesn't throw the round away.
+let restartArmed = 0;
+function restartGame() {
+  if (role === 'guest' || (uiMode === 'online' && role !== 'host')) return;
+  if (!['playing', 'paused', 'countdown', 'over', 'replay'].includes(state)) return;
+  if (performance.now() - restartArmed > 2000) {
+    restartArmed = performance.now();
+    $('hint').textContent = 'Press R again to restart';
+    setTimeout(() => { if (performance.now() - restartArmed >= 1900) $('hint').textContent = hintText(); }, 2000);
+    return;
+  }
+  restartArmed = 0;
+  beginGame();
+}
 
 function spaceAction() {
   if (state === 'replay') return stopReplay();
@@ -1695,13 +1741,23 @@ document.addEventListener('keydown', e => {
   if (e.code === 'KeyN') return toggleMusic();
   if (e.code === 'KeyF') return toggleFullscreen();
   if (e.code === 'Space' || e.code === 'Enter') return pressPause();
+  if (e.code === 'Escape' && !$('helpBox').hidden) return $('helpBtn').click(); // Esc closes the open panels first
+  if (e.code === 'Escape' && !$('skinPanel').hidden) return $('skinBtn').click();
+  if (e.code === 'KeyR') return restartGame();
   if (e.code === 'KeyP' || e.code === 'Escape') { if (state === 'playing' || state === 'paused') pressPause(); return; }
   if (em) return pressEmote(em[0], em[1]);
   if (m) playerSteer(m[0], m[1]);
 });
 
 $('play').addEventListener('click', e => { e.currentTarget.blur(); pressStart(); });
-$('quit').addEventListener('click', e => { e.currentTarget.blur(); pressQuit(); });
+// End game asks for a second click, so a stray click doesn't throw away the round
+let quitArmed = 0;
+$('quit').addEventListener('click', e => {
+  const btn = e.currentTarget; btn.blur();
+  if (role === 'guest' || performance.now() - quitArmed < 3000) { quitArmed = 0; btn.textContent = 'End game'; return pressQuit(); }
+  quitArmed = performance.now(); btn.textContent = 'Click again to end';
+  setTimeout(() => { if (performance.now() - quitArmed >= 2900) { quitArmed = 0; btn.textContent = 'End game'; } }, 3000);
+});
 $('muteBtn').addEventListener('click', e => { e.currentTarget.blur(); toggleMute(); });
 $('fsBtn').addEventListener('click', e => { e.currentTarget.blur(); toggleFullscreen(); });
 $('fsBtn').hidden = !document.fullscreenEnabled;
@@ -1800,7 +1856,8 @@ function renderSkinPanel() {
   const slots = uiMode === 'solo' ? [[0, 'You']] : uiMode === 'local' ? [[0, 'P1'], [1, 'P2']]
     : second() >= 0 ? [[me(), 'You 1'], [second(), 'You 2']] : [[me(), 'You']];
   const nextColor = unlockAt.colors.findIndex(n => n > lifeApples);
-  const note = `<div class="small" style="text-align:center">🎉 ${lifeApples} apples eaten so far${nextColor >= 0 ? ` · next color unlocks at ${unlockAt.colors[nextColor]}` : ' · every color unlocked!'}</div>`;
+  const note = `<div class="small" style="text-align:center">🎉 ${lifeApples} apples eaten so far${nextColor >= 0 ? ` · next color unlocks at ${unlockAt.colors[nextColor]}` : ' · every color unlocked!'}</div>
+    <div class="btns" style="margin:4px 0"><button class="btn2" data-random>🎲 Random look</button></div>`;
   panel.innerHTML = note + slots.map(([slot, label]) => {
     const k = skins[slot], taken = uiMode === 'local' ? skins[1 - slot].c : -1; // local is always P1/P2
     return `<div class="skin-row"><b>${label}</b>
@@ -1825,6 +1882,17 @@ function setSkin(slot, k) {
   applySkins();
 }
 
+// 🎲 Random look: a random unlocked color and pattern for each player on this screen
+function randomLook() {
+  const slots = uiMode === 'solo' ? [0] : uiMode === 'local' ? [0, 1]
+    : second() >= 0 ? [me(), second()] : [me()];
+  for (const slot of slots) {
+    const colors = PALETTE.map((_, i) => i).filter(i => isUnlocked('c', i) && !(uiMode === 'local' && skins[1 - slot].c === i));
+    const pats = Object.keys(PATTERNS).filter(p => isUnlocked('p', p));
+    setSkin(slot, { c: colors[Math.random() * colors.length | 0], p: pats[Math.random() * pats.length | 0] });
+  }
+  renderSkinPanel();
+}
 $('helpBtn').addEventListener('click', e => {
   e.currentTarget.blur();
   $('helpBox').hidden = !$('helpBox').hidden;
@@ -1841,7 +1909,7 @@ $('skinBtn').addEventListener('click', e => {
 });
 $('skinPanel').addEventListener('click', e => {
   const b = e.target.closest('button');
-  if (!b || b.disabled) return;
+  if (!b || b.disabled || b.hasAttribute('data-random')) return; // (the random button is handled by randomLook)
   b.blur();
   const slot = +b.dataset.slot, cur = skins[slot];
   setSkin(slot, validSkin({ c: b.dataset.c !== undefined ? +b.dataset.c : cur.c, p: b.dataset.pat || cur.p }, cur));
@@ -1897,6 +1965,7 @@ $('modeSeg').addEventListener('click', e => {
   dailyDate = null;
   if (role !== 'local') leaveOnline('');
   uiMode = b.dataset.mode;
+  if (uiMode !== 'online') try { localStorage.setItem('coopSnakeMode', uiMode); } catch (e) {} // (so the game opens on it next time)
   if (uiMode === 'solo' && cfg.play === 'versus') cfg = validCfg({ ...cfg, play:'coop' }); // (no one to play against)
   skins = startingSkins();
   fixClash();
@@ -1940,8 +2009,7 @@ $('onStatus').addEventListener('click', e => {
   const url = `${location.origin}${location.pathname}#join=${roomCode}`;
   const done = () => { b.textContent = 'Copied! ✓'; setTimeout(() => { b.textContent = 'Copy invite link'; }, 2000); };
   const manual = () => prompt('Copy this link and send it to your friend:', url);
-  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(url).then(done, manual);
-  else manual();
+  copyText(url).then(ok => (ok ? done() : manual()));
 });
 
 // Host: a player slot is no longer in use. Mid-round its snake stays as a ghost; otherwise the menu updates.
@@ -2769,7 +2837,7 @@ function popup(cell, text, color) {
 }
 function doShake() {
   if (recording) outFx.push(['shake', []]);
-  shake = 1;
+  if (!matchMedia('(prefers-reduced-motion: reduce)').matches) shake = 1; // (no screen shake if the computer asks for less motion)
 }
 
 // ---------- Rendering ----------
@@ -3523,6 +3591,12 @@ function frame(now) {
 }
 
 $('muteBtn').textContent = muted ? '🔇' : '🔊';
+// Open on the mode you used last time (Local or Solo; online always starts from the menu)
+try {
+  const m = localStorage.getItem('coopSnakeMode');
+  if (m === 'solo' || m === 'local') uiMode = m;
+  if (uiMode === 'solo' && cfg.play === 'versus') cfg = validCfg({ ...cfg, play: 'coop' });
+} catch (e) {}
 skins = startingSkins();
 reset();
 showIntro();
